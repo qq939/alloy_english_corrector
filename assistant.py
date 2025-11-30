@@ -208,7 +208,8 @@ class Assistant:
         - Use English spelling for the word list (no quotes or brackets)
         - Provide Chinese explanation after the word list
         - If no word replaced, return an empty list
-        - Drop words shorter than 6 chars, not nouns/verbs, or overly basic beginner words
+        - Drop words shorter than 6 chars
+        - Drop words not nouns/verbs/adjectives, or overly basic beginner words
         Format:
         Replacement words: word1, word2, word3
         中文解释: 解释1, 解释2, 解释3

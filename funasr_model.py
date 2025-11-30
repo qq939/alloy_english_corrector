@@ -3,9 +3,10 @@ import os
 import tempfile
 import numpy as np
 from scipy.io import wavfile
+from typing import List, Optional
 
-class WhisperModel:    # 实际上是FunASR，为了和Whisper模型保持一致，所以叫WhisperModel
-    def __init__(self, model_name: str = "paraformer-zh", vad_model: str | None = None, punc_model: str | None = None, device: str | None = None):
+class FunASRModel:    
+    def __init__(self, model_name: str = "paraformer-zh", vad_model: Optional[str] = None, punc_model: Optional[str] = None, device: Optional[str] = None):
         try:
             if model_name == "small":
                 model_name = "paraformer-zh"
@@ -15,6 +16,9 @@ class WhisperModel:    # 实际上是FunASR，为了和Whisper模型保持一致
         except Exception as e:
             self._auto = None
             self._init_error = e
+        self._stream_chunks: List[np.ndarray] = []
+        self._stream_sr: Optional[int] = None
+        self._streaming: bool = False
 
     def _normalize(self, x: np.ndarray) -> np.ndarray:
         orig = x.dtype
@@ -119,3 +123,54 @@ class WhisperModel:    # 实际上是FunASR，为了和Whisper模型保持一致
                 os.unlink(path)
             except Exception:
                 pass
+
+    def start_stream(self, sample_rate: int) -> None:
+        self._stream_chunks = []
+        self._stream_sr = int(sample_rate)
+        self._streaming = True
+
+    def push_array(self, audio: np.ndarray, sample_rate: int) -> None:
+        if not self._streaming:
+            return
+        sr = int(sample_rate)
+        x = self._prepare(audio, sr)
+        self._stream_chunks.append(x)
+
+    def push_pcm16(self, raw: bytes, sample_rate: int) -> None:
+        if not self._streaming or not raw or sample_rate <= 0:
+            return
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+        self.push_array(x, sample_rate)
+
+    def push_wav(self, raw_wav: bytes) -> None:
+        if not self._streaming:
+            return
+        rate, audio = wavfile.read(io.BytesIO(raw_wav))
+        audio = np.asarray(audio)
+        self.push_array(audio.astype(np.float32) if audio.dtype != np.float32 else audio, int(rate))
+
+    def finish_stream(self) -> str:
+        if not self._streaming or not self._stream_chunks:
+            self._streaming = False
+            self._stream_chunks = []
+            self._stream_sr = None
+            return ""
+        full = np.concatenate(self._stream_chunks).astype(np.float32)
+        self._stream_chunks = []
+        sr = self._stream_sr or 16000
+        x = self._prepare(full, sr)
+        y = (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            wavfile.write(tmp.name, 16000, y)
+            path = tmp.name
+        try:
+            self._ensure_ready()
+            out = self._auto.generate(input=path, is_streaming=True)
+            return self._extract_text(out)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+            self._streaming = False
+            self._stream_sr = None

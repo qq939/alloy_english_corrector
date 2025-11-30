@@ -5,7 +5,7 @@ import threading
 import numpy as np
 from io import BytesIO
 from scipy.io import wavfile
-from assistant import assistant, webcam_stream
+from assistant import assistant
 import time
 from queue import Queue, Full
 import logging
@@ -14,6 +14,10 @@ logfile = "wisper_logfile.log"
 logging.basicConfig(filename=logfile, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 MIN_SPEECH_RMS = 0.008
 MIN_SPEECH_DURATION = 0.25
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(message)s'))
+console_handler.setLevel(logging.INFO)
+log.addHandler(console_handler)
 
 # 1. 初始化Whisper模型（CPU选small，GPU改medium）
 whisper_model = whisper.load_model("small")
@@ -77,10 +81,10 @@ def audio_callback(recognizer, audio):
             no_speech_threshold=0.5,
             logprob_threshold=-1.1,
             temperature=0.0,
-            prompt='请识别中文、英文，包括中英混说，允许正常口语停顿，无语音时返回空，不要补充任何无关文本["Thanks for watching !","謝謝收看"]。统一输出为英文。',
+            prompt='请识别中文、英文，包括中英混说，翻译成英语。允许正常口语停顿，无语音时返回空，不要补充任何无关文本["Thanks for watching !","謝謝收看"]',
             language=use_lang,
             fp16=False,
-            task="transcribe",
+            task="translate",
             verbose=False,
         )
 
@@ -117,7 +121,7 @@ def audio_callback(recognizer, audio):
             # if stop_handle:
             #     stop_handle(wait_for_stop=False)
 
-            assistant.answer(b, webcam_stream.read(encode=True))
+            assistant.answer(b, None)
             buffer_text = ""
         
     except Exception as e:

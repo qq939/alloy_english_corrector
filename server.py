@@ -12,13 +12,13 @@ import threading
 import time
 import numpy as np
 from scipy.io import wavfile
-import whisper
+import speech_recognition as sr
 from assistant import assistant
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["JSON_AS_ASCII"] = False
 
-whisper_model = whisper.load_model("small")
+recognizer = sr.Recognizer()
 
 buffer_text = ""
 buffer_lock = threading.Lock()
@@ -102,20 +102,22 @@ def upload_audio():
     now_ts = time.time()
     if (not speaking_active) and (duration < MIN_SPEECH_DURATION and rms < MIN_SPEECH_RMS):
         return jsonify({"ok": True, "text": ""})
-    result = whisper_model.transcribe(
-        audio_np,
-        no_speech_threshold=0.5,
-        logprob_threshold=-1.1,
-        compression_ratio_threshold=2.0,
-        temperature=0.0,
-        condition_on_previous_text=False,
-        prompt='Translate mixed Chinese and English speech to English. Allow normal pauses. Return empty when no speech. Do not add irrelevant text like ["Thanks for watching!", "謝謝收看"].',
-        language=None,
-        fp16=False,
-        task="translate",
-        verbose=None,
-    )
-    text = (result.get("text") or "").strip()
+    text = ""
+    try:
+        with sr.AudioFile(io.BytesIO(raw)) as src:
+            audio_data = recognizer.record(src)
+        try:
+            text = recognizer.recognize_whisper(audio_data, model="base", language="english")
+        except (sr.UnknownValueError, sr.RequestError, Exception) as e:
+            add_log(f"识别异常: {e}")
+            try:
+                text = recognizer.recognize_google(audio_data, language='en-US')
+            except Exception as e2:
+                add_log(f"识别回退失败: {e2}")
+                text = ""
+    except Exception as e:
+        add_log(f"音频解析失败: {e}")
+        text = ""
     if text:
         text = _sanitize_text(text)
     if not text:

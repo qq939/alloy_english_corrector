@@ -1,7 +1,5 @@
-from ast import main
 import base64
 from threading import Lock, Thread
-from langchain_core.tools import structured
 import openai
 import json
 import os
@@ -120,7 +118,7 @@ class Assistant:
         })
 
     def renew_word_frequency(self, input_data):
-        logger.info(f"{input_data['llm_output']}")
+        logger.info(f"{input_data['llm_output3']}")
         words = input_data["current_replacement_words"]
         # 从chat history解析最新的词频统计
         latest_word_frequency = {}
@@ -286,7 +284,7 @@ if __name__ == "__main__":
     def audio_callback(recognizer, audio):
         try:
             prompt = recognizer.recognize_whisper(audio, model="base", language="english")
-            assistant.answer(prompt, webcam_stream.read(encode=True))
+            assistant.answer(prompt, None)
         except UnknownValueError:
             print("There was an error processing the audio.")
 

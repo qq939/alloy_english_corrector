@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TRAE Solo</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div id="secureWarn" class="warn hidden">为使用手机摄像头/麦克风，请通过 HTTPS 访问本页（建议在后端启用 SSL 或使用 https 隧道）。</div>
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" width="28" height="28" viewBox="0 0 24 24">
+          <defs>
+            <filter id="glow">
+              <feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="#39FF14" flood-opacity="0.6"/>
+            </filter>
+          </defs>
+          <rect x="3" y="3" width="18" height="18" rx="4" stroke="#39FF14" fill="none" stroke-width="1.2" filter="url(#glow)"/>
+          <path d="M8 16 V8 H10.5 L13 12 V8 H16 V16" stroke="#39FF14" stroke-width="1.2" fill="none" filter="url(#glow)"/>
+        </svg>
+        <span id="logoText" class="logo">Mr. Jiang</span>
+      </div>
+    </header>
+    <main class="grid neon">
+      <section class="panel outlined">
+        <div class="panel-title">音轨</div>
+        <canvas id="wave" width="600" height="160"></canvas>
+        <div class="row">
+          <button id="startAudio" class="ghost-btn">开始录音</button>
+          <button id="stopAudio" class="ghost-btn">停止录音</button>
+        </div>
+      </section>
+      <section class="panel outlined">
+        <div class="panel-title">日志</div>
+        <div id="logs" class="logs"></div>
+      </section>
+    </main>
+    <script src="/static/app.js"></script>
+  </body>
+  </html>

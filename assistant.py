@@ -1,13 +1,11 @@
 from ast import main
 import base64
 from threading import Lock, Thread
-import cv2
 from langchain_core.tools import structured
 import openai
 import json
 import os
 import logging
-from cv2 import VideoCapture, imencode
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
@@ -16,8 +14,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory, FileC
 from langchain_core.output_parsers import JsonOutputParser, StrOutputParser
 from langchain_core.runnables.history import RunnableWithMessageHistory, RunnablePassthrough
 from langchain_openai import ChatOpenAI
-from pyaudio import PyAudio, paInt16
-from speech_recognition import Microphone, Recognizer, UnknownValueError
+from speech_recognition import UnknownValueError
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -30,7 +27,9 @@ logger.addHandler(console_handler)
 
 class WebcamStream:
     def __init__(self):
-        self.stream = VideoCapture(index=0)
+        import cv2 as _cv2
+        self._cv2 = _cv2
+        self.stream = self._cv2.VideoCapture(index=0)
         _, self.frame = self.stream.read()
         self.running = False
         self.lock = Lock()
@@ -59,7 +58,7 @@ class WebcamStream:
         self.lock.release()
 
         if encode:
-            _, buffer = imencode(".jpeg", frame)
+            _, buffer = self._cv2.imencode(".jpeg", frame)
             return base64.b64encode(buffer)
 
         return frame
@@ -143,8 +142,11 @@ class Assistant:
 
         self.chat_message_history.add_message(SystemMessage(content=f"[Statistics] Renewed word frequency: {json.dumps(renewed_word_frequency)}"))
 
-        # 返回包含当前替换词和历史词频的字典
-        return input_data['llm_output1']
+        return "\n".join([
+            str(input_data.get('llm_output1', '')),
+            str(input_data.get('llm_output', '')),
+            str(input_data.get('llm_output3', '')),
+        ]).strip()
 
     def answer(self, prompt, image):
         if not prompt:
@@ -158,14 +160,10 @@ class Assistant:
             {"prompt": prompt},
             config={"configurable": {"session_id": "unused"}},
         ).strip()
-
-
-        # logger.info(f"\nRepeat offend:\n {response}")
-
-        # if response:
-        #     self._tts(response)
+        return response
 
     def _tts(self, response):
+        from pyaudio import PyAudio, paInt16
         player = PyAudio().open(format=paInt16, channels=1, rate=24000, output=True)
 
         with openai.audio.speech.with_streaming_response.create(
@@ -180,10 +178,12 @@ class Assistant:
     def _create_inference_chain(self, model):
         SYSTEM_PROMPT =\
         """
-        You are an English teacher having a conversation with your student, aiming to correct their incorrect usage of words. 
-        Student may use wrong words or phrases, and you need to tell them how to replace their original expressions with authentic English. 
-        You need to correct semantic errors caused by mispronunciation, such as pronouncing "walking" as "working". Note that the student's original utterance can have interjections and repetitive parts removed.
-        Give concise answers, with the format output: "\nOriginal sentence: xxx\nReplacement sentence: xxx"
+        You are an English teacher. Always respond in ENGLISH ONLY.
+        If the user's sentence is not English, translate it to English first, then provide the corrected English sentence.
+        Remove interjections and repetitive parts if necessary; fix mispronunciations (e.g., "walking" vs "working").
+        Output format (strict):
+        Original sentence: <English sentence>
+        Replacement sentence: <Corrected English sentence>
         """
         # 英语老师
         prompt_template = ChatPromptTemplate.from_messages(
@@ -204,13 +204,16 @@ class Assistant:
 
         SYSTEM_PROMPT2 =\
         """
-        You are recieveing the Origin sentence and the Replacement sentence, and you need to find better version words (replaced words) in the Replacement sentence. 
-        Output the replaced words, no parentheses or brackets, no single quotes or double quotes. 
-        Give concise answers, with the format output: "\nReplacement words: xxx, xxx, xxx\n中文解释: xxx, xxx, xxx"
-        If no word replaced, just give the answer: "\nReplacement words: "
-        If the replaced word is less than 6 characters, drop that word.
-        If the replaced word is not a noun or a verb, drop that word.
-        If the replaced word is a simple word that non-native speakers learn at the beginner level, drop that word.
+        You receive the English Origin sentence and the English Replacement sentence.
+        Extract better version words (replaced words) from the Replacement sentence.
+        Output rules:
+        - Use English spelling for the word list (no quotes or brackets)
+        - Provide Chinese explanation after the word list
+        - If no word replaced, return an empty list
+        - Drop words shorter than 6 chars, not nouns/verbs, or overly basic beginner words
+        Format:
+        Replacement words: word1, word2, word3
+        中文解释: 解释1, 解释2, 解释3
         """
         
         # 词汇
@@ -253,7 +256,7 @@ class Assistant:
 
         chain = RunnablePassthrough.assign(llm_output = RunnableLambda(self.deduplicate_prompt) | prompt_template | model) | RunnableLambda(self.print_llm_output) | JsonOutputParser()
         chain2 = chain | RunnablePassthrough.assign(llm_output = prompt_template2 | model | StrOutputParser()) | RunnableLambda(self.extract_replacement_words) | JsonOutputParser()
-        chain3 = chain2 | RunnableLambda(self.deduplicate_chat_history) | RunnablePassthrough.assign(llm_output =prompt_template3 | model | StrOutputParser()) | RunnableLambda(self.renew_word_frequency) | StrOutputParser()
+        chain3 = chain2 | RunnableLambda(self.deduplicate_chat_history) | RunnablePassthrough.assign(llm_output3 = prompt_template3 | model | StrOutputParser()) | RunnableLambda(self.renew_word_frequency) | StrOutputParser()
 
         
         return RunnableWithMessageHistory(
@@ -264,7 +267,7 @@ class Assistant:
         )
 
 
-webcam_stream = WebcamStream().start()
+webcam_stream = None
 
 # model = ChatGoogleGenerativeAI(model="gemini-1.5-flash-latest")
 
@@ -277,14 +280,15 @@ model = ChatOpenAI(model="deepseek-chat", base_url="https://api.deepseek.com/v1"
 assistant = Assistant(model)
 
 if __name__ == "__main__":
+    import cv2
+    from speech_recognition import Microphone, Recognizer
+    webcam_stream = WebcamStream().start()
     def audio_callback(recognizer, audio):
         try:
             prompt = recognizer.recognize_whisper(audio, model="base", language="english")
             assistant.answer(prompt, webcam_stream.read(encode=True))
-
         except UnknownValueError:
             print("There was an error processing the audio.")
-
 
     recognizer = Recognizer()
     microphone = Microphone()

@@ -194,4 +194,5 @@ function fetchLogs() {
 
 document.getElementById('startAudio').onclick = startAudio;
 document.getElementById('stopAudio').onclick = stopAudio;
+document.getElementById('recognizeAudio') && (document.getElementById('recognizeAudio').onclick = function(){ fetch('/api/recognize', { method: 'POST' }).then(r => r.json()).then(_ => fetchLogs()); });
 setInterval(fetchLogs, 1000);

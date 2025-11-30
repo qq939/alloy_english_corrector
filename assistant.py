@@ -180,7 +180,7 @@ class Assistant:
         If the user's sentence is not English, translate it to English first, then provide the corrected English sentence.
         Remove interjections and repetitive parts if necessary; fix mispronunciations (e.g., "walking" vs "working").
         Output format (strict):
-        Original sentence: <English sentence>
+        Original    sentence: <English sentence>
         Replacement sentence: <Corrected English sentence>
         """
         # 英语老师

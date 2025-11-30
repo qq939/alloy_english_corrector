@@ -11,20 +11,26 @@ import threading
 import time
 import numpy as np
 from scipy.io import wavfile
-import speech_recognition as sr
+from whisper_model import WhisperModel
 from assistant import assistant
+import speech_recognition as sr
+from speech_recognition import UnknownValueError
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.config["JSON_AS_ASCII"] = False
 
-recognizer = sr.Recognizer()
+whisper_model = WhisperModel("small")
 
 buffer_text = ""
 buffer_lock = threading.Lock()
 speaking_active = False
 speaking_last_ts = 0.0
-MIN_SPEECH_RMS = 0.008
+MIN_SPEECH_RMS = 0.08
 MIN_SPEECH_DURATION = 0.25
+
+audio_chunks = []
+audio_lock = threading.Lock()
+recognizer = None
 
 logs = []
 log_once_audio = False
@@ -82,7 +88,7 @@ def get_logs():
 
 @app.route("/api/audio", methods=["POST"]) 
 def upload_audio():
-    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts
+    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, recognizer
     file_raw = request.files.get("audio_raw")
     file_wav = request.files.get("audio")
     if not file_raw and not file_wav:
@@ -96,44 +102,89 @@ def upload_audio():
     now_ts = time.time()
     text = ""
     try:
+        sr_rate = 16000
+        arr = None
         if file_raw:
             try:
                 sr_rate = int(request.form.get("sr", "16000"))
             except Exception:
                 sr_rate = 16000
-            audio_data = sr.AudioData(raw, sr_rate, 2)
+            if sr_rate <= 0 or sr_rate < 8000 or sr_rate > 96000:
+                return jsonify({"ok": True, "text": ""})
+            if not raw:
+                return jsonify({"ok": True, "text": ""})
+            nsamples = len(raw) // 2
+            min_samples = int(max(1600, sr_rate * 0.3))
+            if nsamples < min_samples:
+                return jsonify({"ok": True, "text": ""})
+            if len(raw) % 2 != 0:
+                raw = raw[: len(raw) - 1]
+            x = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
+            arr = x
+            pcm_bytes = raw
         else:
-            with sr.AudioFile(io.BytesIO(raw)) as src:
-                audio_data = recognizer.record(src)
-        try:
-            text = recognizer.recognize_whisper(audio_data, model="base", language="english")
-        except (sr.UnknownValueError, sr.RequestError, Exception) as e:
-            add_log(f"识别异常: {e}")
+            rate, audio_np = wavfile.read(io.BytesIO(raw))
             try:
-                text = recognizer.recognize_google(audio_data, language='en-US')
-            except Exception as e2:
-                add_log(f"识别回退失败: {e2}")
+                sr_rate = int(rate)
+            except Exception:
+                sr_rate = 16000
+            if sr_rate <= 0 or sr_rate < 8000 or sr_rate > 96000:
+                return jsonify({"ok": True, "text": ""})
+            if getattr(audio_np, "ndim", 1) > 1:
+                audio_np = np.mean(audio_np, axis=1)
+            if audio_np.dtype.kind in ("i", "u"):
+                x = audio_np.astype(np.float32) / 32768.0
+            else:
+                x = audio_np.astype(np.float32)
+            arr = x
+            y = np.clip(x, -1.0, 1.0)
+            pcm_bytes = (y * 32767.0).astype(np.int16).tobytes()
+        dur = len(arr) / float(sr_rate) if arr is not None else 0.0
+        rms = float(np.sqrt(np.mean(np.square(arr)))) if arr is not None and arr.size else 0.0
+        if (not speaking_active) and (dur < MIN_SPEECH_DURATION and rms < MIN_SPEECH_RMS):
+            return jsonify({"ok": True, "text": ""})
+        with audio_lock:
+            audio_chunks.append(arr)
+        speaking_active = True
+        speaking_last_ts = now_ts
+        if recognizer is None:
+            recognizer = sr.Recognizer()
+        try:
+            ad = sr.AudioData(pcm_bytes, sr_rate, 2)
+            phrase = recognizer.recognize_whisper(ad, model="base", language="english")
+        except UnknownValueError:
+            phrase = ""
+        b = (phrase or "").strip().lower()
+        import re
+        ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]?$", b)
+        recognize_duration = None
+        if ((b in {"ok", "okay"}) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
+            with audio_lock:
+                if audio_chunks:
+                    full = np.concatenate(audio_chunks).astype(np.float32)
+                    audio_chunks.clear()
+                else:
+                    full = arr.astype(np.float32)
+            full = np.clip(full, -1.0, 1.0)
+            full = np.ascontiguousarray(full, dtype=np.float32)
+            try:
+                _t0 = time.time()
+                text = whisper_model.transcribe_array(full, 16000)
+                recognize_duration = time.time() - _t0
+            except Exception as e:
+                add_log(f"Whisper识别异常: {e}")
                 text = ""
     except Exception as e:
-        add_log(f"音频解析失败: {e}")
+        add_log(f"Whisper识别异常: {e}")
         text = ""
     if text:
         text = _sanitize_text(text)
-    if not text:
-        return jsonify({"ok": True, "text": ""})
-    with buffer_lock:
-        buffer_text = (buffer_text + " " + text).strip()
-        b = buffer_text.lower()
-    with log_once_lock:
-        global log_once_recog
-        if not log_once_recog:
+        if recognize_duration is not None:
+            add_log(f"识别完成（用时{recognize_duration:.2f}秒）")
+        else:
             add_log("识别完成")
-            log_once_recog = True
-    speaking_active = True
-    speaking_last_ts = now_ts
-    import re
-    ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]?$", b)
-    if ((text.strip().lower() in {"ok", "okay"}) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
+        b = text.lower()
+        import re
         final = re.sub(r"\s*(ok|okay)[\.!?\"]?$", "", b, flags=re.IGNORECASE).strip()
         resp = assistant.answer(final, None)
         add_log("提交已触发")
@@ -158,6 +209,55 @@ def upload_audio():
         with buffer_lock:
             buffer_text = ""
         last_submit_ts = now_ts
+        return jsonify({"ok": True, "text": text})
+    return jsonify({"ok": True, "text": ""})
+
+@app.route("/api/recognize", methods=["POST"]) 
+def recognize_now():
+    global last_submit_ts
+    now_ts = time.time()
+    with audio_lock:
+        if not audio_chunks:
+            return jsonify({"ok": True, "text": ""})
+        full = np.concatenate(audio_chunks).astype(np.float32)
+        audio_chunks.clear()
+    full = np.clip(full, -1.0, 1.0)
+    full = np.ascontiguousarray(full, dtype=np.float32)
+    try:
+        _t0 = time.time()
+        text = whisper_model.transcribe_array(full, 16000)
+        recognize_duration = time.time() - _t0
+    except Exception as e:
+        add_log(f"Whisper识别异常: {e}")
+        return jsonify({"ok": True, "text": ""})
+    if not text:
+        return jsonify({"ok": True, "text": ""})
+    text = _sanitize_text(text)
+    add_log(f"识别完成（用时{recognize_duration:.2f}秒）")
+    final = text.lower()
+    resp = assistant.answer(final, None)
+    add_log("提交已触发")
+    if resp:
+        added = False
+        if isinstance(resp, bytes):
+            try:
+                text_resp = resp.decode("utf-8", errors="ignore")
+            except Exception:
+                text_resp = resp.decode("latin-1", errors="ignore")
+        else:
+            text_resp = str(resp)
+        text_resp = text_resp.replace("\r\n", "\n").replace("\r", "\n")
+        text_resp = text_resp.replace("\\n", "\n")
+        for ln in text_resp.splitlines():
+            ln = ln.strip()
+            if ln:
+                add_log(ln)
+                added = True
+        if not added:
+            add_log(text_resp)
+    with buffer_lock:
+        buffer_text = ""
+    last_submit_ts = now_ts
     return jsonify({"ok": True, "text": text})
 
 def run():
@@ -171,9 +271,9 @@ def run():
     elif ssl_cert and ssl_key:
         ssl_context = (ssl_cert, ssl_key)
     try:
-        silent = sr.AudioData(b"\x00" * (16000 * 2 // 2), 16000, 2)
+        _warm = np.zeros(16000, dtype=np.float32)
         try:
-            recognizer.recognize_whisper(silent, model="base", language="english")
+            whisper_model.transcribe_array(_warm, 16000)
         except Exception:
             pass
     except Exception:

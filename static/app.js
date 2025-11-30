@@ -112,7 +112,7 @@ function startAudio() {
       } else if (audioCtx && audioCtx.resume) {
         audioCtx.resume().catch(() => {});
       }
-      setInterval(flushAudio, 2000);
+      setInterval(flushAudio, 1000);
       drawWave();
       document.getElementById('startAudio').classList.add('pulse');
     }).catch(err => logClient(`麦克风错误: ${err && err.name || 'Unknown'}`));
@@ -153,6 +153,17 @@ function encodeWAV(samples, sampleRate) {
   return new Blob([view], { type: 'audio/wav' });
 }
 
+function encodePCM16(samples) {
+  const buf = new ArrayBuffer(samples.length * 2);
+  const view = new DataView(buf);
+  let offset = 0;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return new Blob([view], { type: 'application/octet-stream' });
+}
+
 function flattenPCM(chunks) {
   let length = chunks.reduce((sum, c) => sum + c.length, 0);
   const out = new Float32Array(length);
@@ -165,9 +176,10 @@ function flushAudio() {
   if (!pcmBuffer.length) return;
   const samples = flattenPCM(pcmBuffer);
   pcmBuffer = [];
-  const wav = encodeWAV(samples);
+  const pcm = encodePCM16(samples);
   const form = new FormData();
-  form.append('audio', wav, 'chunk.wav');
+  form.append('audio_raw', pcm, 'chunk.pcm');
+  form.append('sr', String(audioCtx ? audioCtx.sampleRate : 16000));
   fetch('/api/audio', { method: 'POST', body: form })
     .then(r => r.json())
     .then(_ => fetchLogs());
@@ -182,4 +194,4 @@ function fetchLogs() {
 
 document.getElementById('startAudio').onclick = startAudio;
 document.getElementById('stopAudio').onclick = stopAudio;
-setInterval(fetchLogs, 1500);
+setInterval(fetchLogs, 1000);

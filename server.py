@@ -6,7 +6,6 @@ try:
     mp.set_start_method("spawn")
 except RuntimeError:
     pass
-import base64
 import io
 import threading
 import time
@@ -32,7 +31,7 @@ log_once_audio = False
 log_once_recog = False
 log_once_lock = threading.Lock()
 last_submit_ts = 0.0
-SUBMIT_COOLDOWN = 2.0
+SUBMIT_COOLDOWN = 1.0
 
 import re
 
@@ -84,28 +83,28 @@ def get_logs():
 @app.route("/api/audio", methods=["POST"]) 
 def upload_audio():
     global buffer_text, speaking_active, speaking_last_ts, last_submit_ts
-    file = request.files.get("audio")
-    if not file:
+    file_raw = request.files.get("audio_raw")
+    file_wav = request.files.get("audio")
+    if not file_raw and not file_wav:
         return jsonify({"ok": False, "error": "no audio"}), 400
-    raw = file.read()
+    raw = (file_raw or file_wav).read()
     with log_once_lock:
         global log_once_audio
         if not log_once_audio:
             add_log("音频片段已接收")
             log_once_audio = True
-    rate, audio_np = wavfile.read(io.BytesIO(raw))
-    if audio_np.ndim > 1:
-        audio_np = np.mean(audio_np, axis=1)
-    audio_np = audio_np.astype(np.float32) / 32768.0
-    duration = len(audio_np) / float(rate)
-    rms = float(np.sqrt(np.mean(np.square(audio_np))))
     now_ts = time.time()
-    if (not speaking_active) and (duration < MIN_SPEECH_DURATION and rms < MIN_SPEECH_RMS):
-        return jsonify({"ok": True, "text": ""})
     text = ""
     try:
-        with sr.AudioFile(io.BytesIO(raw)) as src:
-            audio_data = recognizer.record(src)
+        if file_raw:
+            try:
+                sr_rate = int(request.form.get("sr", "16000"))
+            except Exception:
+                sr_rate = 16000
+            audio_data = sr.AudioData(raw, sr_rate, 2)
+        else:
+            with sr.AudioFile(io.BytesIO(raw)) as src:
+                audio_data = recognizer.record(src)
         try:
             text = recognizer.recognize_whisper(audio_data, model="base", language="english")
         except (sr.UnknownValueError, sr.RequestError, Exception) as e:
@@ -121,11 +120,6 @@ def upload_audio():
     if text:
         text = _sanitize_text(text)
     if not text:
-        if rms >= MIN_SPEECH_RMS:
-            speaking_active = True
-            speaking_last_ts = now_ts
-        elif speaking_active and (now_ts - speaking_last_ts) > 2.0:
-            speaking_active = False
         return jsonify({"ok": True, "text": ""})
     with buffer_lock:
         buffer_text = (buffer_text + " " + text).strip()
@@ -176,6 +170,14 @@ def run():
         ssl_context = "adhoc"
     elif ssl_cert and ssl_key:
         ssl_context = (ssl_cert, ssl_key)
+    try:
+        silent = sr.AudioData(b"\x00" * (16000 * 2 // 2), 16000, 2)
+        try:
+            recognizer.recognize_whisper(silent, model="base", language="english")
+        except Exception:
+            pass
+    except Exception:
+        pass
     try:
         app.run(host="0.0.0.0", port=port, ssl_context=ssl_context)
     except OSError:

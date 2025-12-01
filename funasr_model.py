@@ -6,10 +6,21 @@ from scipy.io import wavfile
 from typing import List, Optional
 
 class FunASRModel:    
-    def __init__(self, model_name: str = "paraformer-zh", vad_model: Optional[str] = None, punc_model: Optional[str] = None, device: Optional[str] = None):
+    def __init__(self, model_name: str = "paraformer-zh", vad_model: Optional[str] = "fsmn-vad", punc_model: Optional[str] = None, device: Optional[str] = None):
         try:
-            if model_name == "small":
-                model_name = "paraformer-zh"
+            env_model = os.getenv("FUNASR_MODEL")
+            env_vad = os.getenv("FUNASR_VAD_MODEL")
+            env_punc = os.getenv("FUNASR_PUNC_MODEL")
+            if env_model:
+                model_name = env_model
+            if env_vad:
+                vad_model = env_vad
+            if env_punc:
+                punc_model = env_punc
+            aliases = {
+                "paraformer-zh": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+            }
+            model_name = aliases.get(model_name, model_name)
             from funasr import AutoModel
             self._auto = AutoModel(model=model_name, vad_model=vad_model, punc_model=punc_model, device=device)
             self._init_error = None

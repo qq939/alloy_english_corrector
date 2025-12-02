@@ -191,6 +191,8 @@ function flushAudio() {
 
 function fetchLogs() {
   fetch('/api/logs').then(r => r.json()).then(d => {
+    const liveBox = document.getElementById('live');
+    if (liveBox) liveBox.textContent = d.live || '';
     logsBox.innerHTML = d.logs.map(x => `<div>${x}</div>`).join('');
     logsBox.scrollTop = logsBox.scrollHeight;
   });

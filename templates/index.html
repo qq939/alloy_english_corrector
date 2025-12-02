@@ -23,17 +23,19 @@
       </div>
     </header>
     <main class="grid neon">
-      <section class="panel outlined">
+      <section class="panel outlined audio">
         <div class="panel-title">音轨</div>
-        <canvas id="wave" width="600" height="160"></canvas>
+        <div class="wavebox"><canvas id="wave"></canvas></div>
         <div class="row">
           <button id="startAudio" class="ghost-btn">开始录音</button>
           <button id="stopAudio" class="ghost-btn">停止录音</button>
           <button id="recognizeAudio" class="ghost-btn">识别</button>
         </div>
       </section>
-      <section class="panel outlined">
+      <section class="panel outlined logs-panel">
         <div class="panel-title">日志</div>
+        <div id="live" class="livebar"></div>
+        <div class="divider"></div>
         <div id="logs" class="logs"></div>
       </section>
     </main>

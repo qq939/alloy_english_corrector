@@ -106,7 +106,9 @@ def index():
 
 @app.route("/api/logs")  # 获取日志
 def get_logs():
-    return jsonify({"logs": logs[-100:]})  # 返回最近100条？？？
+    with buffer_lock:
+        live = buffer_text
+    return jsonify({"logs": logs[-100:], "live": live})
 
 @app.route("/api/audio", methods=["POST"])  # 音频上传并流式识别（按片返回文本）
 def upload_audio():

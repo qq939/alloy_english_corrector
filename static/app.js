@@ -194,5 +194,18 @@ function fetchLogs() {
 
 document.getElementById('startAudio').onclick = startAudio;
 document.getElementById('stopAudio').onclick = stopAudio;
-document.getElementById('recognizeAudio') && (document.getElementById('recognizeAudio').onclick = function(){ fetch('/api/recognize', { method: 'POST' }).then(r => r.json()).then(_ => fetchLogs()); });
+const btnRecognize = document.getElementById('recognizeAudio');
+if (btnRecognize) {
+  btnRecognize.addEventListener('click', function(){
+    logClient('识别按钮点击');
+    btnRecognize.disabled = true;
+    try { flushAudio(); } catch (e) {}
+    setTimeout(function(){
+      fetch('/api/recognize', { method: 'POST' })
+        .then(r => r.json())
+        .then(_ => fetchLogs())
+        .finally(() => { btnRecognize.disabled = false; });
+    }, 150);
+  });
+}
 setInterval(fetchLogs, 1000);

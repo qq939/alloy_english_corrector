@@ -13,8 +13,9 @@ import numpy as np  # 数值计算
 from scipy.io import wavfile  # 读写WAV
 from funasr_model import FunASRModel  # 引入funASR模型封装
 from assistant import assistant  # 文本助理
+import speech_recognition as sr  # 轻量触发词识别
+from speech_recognition import UnknownValueError  # 无法识别异常
 import re  # 文本正则
-import ssl
 
 app = Flask(__name__, static_folder="static", template_folder="templates")  # Flask应用
 app.config["JSON_AS_ASCII"] = False  # 返回JSON允许中文
@@ -25,16 +26,18 @@ buffer_text = ""  # 缓冲文本
 buffer_lock = threading.Lock()  # 缓冲锁
 speaking_active = False  # 说话状态
 speaking_last_ts = 0.0  # 最近说话时间戳
-MIN_SPEECH_RMS = 0.08
+MIN_SPEECH_RMS = 0.008  # 最低能量阈值
 MIN_SPEECH_DURATION = 0.25  # 最短时长阈值
 
 logs = []  # 日志列表
 log_once_audio = False  # 首次音频日志标记
 log_once_lock = threading.Lock()  # 日志一次性锁
 last_submit_ts = 0.0  # 上次提交时间
-SUBMIT_COOLDOWN = 2.0
+SUBMIT_COOLDOWN = 1.0  # 提交冷却时间
 
-recognizer = None  # 保留占位，不再使用轻量触发词识别
+audio_chunks = []  # 累积音频片段数组
+audio_lock = threading.Lock()  # 音频锁
+recognizer = None  # 轻量触发词识别器
 
 def _sanitize_text(s: str) -> str:  # 文本清洗
     s = re.sub(r"\s+", " ", s).strip()  # 归并空白
@@ -70,36 +73,6 @@ def add_log(s):  # 统一日志追加
     if len(logs) > 200:
         del logs[: len(logs) - 200]  # 限制长度
 
-def submit_text(text: str, dt: float | None = None, strip_ok: bool = False) -> None:
-    if not text:
-        return
-    if strip_ok:
-        text = re.sub(r"\s*(ok|okay)[\.!?\"]?$", "", text, flags=re.IGNORECASE).strip()
-    text = _sanitize_text(text)
-    if dt is not None:
-        add_log(f"识别完成（用时{dt:.2f}秒）")
-    final = text.lower()
-    resp = assistant.answer(final, None)
-    add_log("提交已触发")
-    if resp:
-        added = False
-        if isinstance(resp, bytes):
-            try:
-                text_resp = resp.decode("utf-8", errors="ignore")
-            except Exception:
-                text_resp = resp.decode("latin-1", errors="ignore")
-        else:
-            text_resp = str(resp)
-        text_resp = text_resp.replace("\r\n", "\n").replace("\r", "\n")
-        text_resp = text_resp.replace("\\n", "\n")
-        for ln in text_resp.splitlines():
-            ln = ln.strip()
-            if ln:
-                add_log(ln)
-                added = True
-        if not added:
-            add_log(text_resp)
-
 @app.route("/")  # 首页
 def index():
     return render_template("index.html")  # 返回页面
@@ -108,9 +81,9 @@ def index():
 def get_logs():
     return jsonify({"logs": logs[-100:]})  # 返回最近100条？？？
 
-@app.route("/api/audio", methods=["POST"])  # 音频上传并流式识别（按片返回文本）
+@app.route("/api/audio", methods=["POST"])  # 音频上传并流式累积
 def upload_audio():
-    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, recognizer, last_chunk_audio, last_chunk_sr  # 使用全局状态
+    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, recognizer  # 使用全局状态
     file_raw = request.files.get("audio_raw")  # PCM16文件
     file_wav = request.files.get("audio")  # WAV文件
     if not file_raw and not file_wav:  # 无文件
@@ -164,57 +137,114 @@ def upload_audio():
         rms = float(np.sqrt(np.mean(np.square(arr)))) if arr is not None and arr.size else 0.0  # 能量
         if (not speaking_active) and (dur < MIN_SPEECH_DURATION and rms < MIN_SPEECH_RMS):  # 过滤短/弱片段
             return jsonify({"ok": True, "text": ""})
+        if not getattr(asr_model, "_streaming", False):  # 未开始流式则启动
+            asr_model.start_stream(sr_rate)
+        asr_model.push_array(arr, sr_rate)  # 推入流式缓冲
+        with audio_lock:
+            audio_chunks.append(arr)  # 本地累积片段（用于前端按钮识别）
         speaking_active = True  # 标记说话态
         speaking_last_ts = now_ts  # 更新时间戳
-        last_chunk_audio = arr.astype(np.float32)  # 记录最近片段供按钮兜底识别
-        last_chunk_sr = int(sr_rate)
-        _t0 = time.time()  # 开始计时
-        text_chunk = asr_model.transcribe_array(arr.astype(np.float32), sr_rate)  # 直接对当前片段做识别
-        dt = time.time() - _t0  # 识别耗时
-        if text_chunk:
-            with buffer_lock:
-                buffer_text = (buffer_text + " " + text_chunk).strip()  # 累积流式识别文本
-            b_all = buffer_text.lower()
-            ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]?$", b_all)  # 末尾触发词检测
-            if ((" ok" in b_all) or (" okay" in b_all) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
-                # ok触发提交
-                submit_text(b_all, dt=dt, strip_ok=True)
+        if recognizer is None:  # 初始化轻量触发词识别
+            recognizer = sr.Recognizer()
+        try:
+            ad = sr.AudioData(pcm_bytes, sr_rate, 2)  # 构造AudioData
+            phrase = recognizer.recognize_whisper(ad, model="base", language="english")  # 仅检测ok/okay
+        except UnknownValueError:
+            phrase = ""  # 无触发词
+        b = (phrase or "").strip().lower()  # 规范化触发文本
+        ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]?$", b)  # 末尾触发词检测
+        if ((b in {"ok", "okay"}) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:  # 冷却后触发
+            with audio_lock:
+                if audio_chunks:
+                    full = np.concatenate(audio_chunks).astype(np.float32)  # 拼接整段
+                    audio_chunks.clear()
+                else:
+                    full = arr.astype(np.float32)  # 仅当前片段
+            full = np.clip(full, -1.0, 1.0)  # 裁剪幅度
+            full = np.ascontiguousarray(full, dtype=np.float32)  # 连续内存
+            _t0 = time.time()  # 开始计时
+            text = asr_model.finish_stream()  # 结束流式并识别
+            dt = time.time() - _t0  # 识别耗时
+            if text:
+                text = _sanitize_text(text)  # 清洗文本
+                add_log(f"识别完成（用时{dt:.2f}秒）")  # 记录耗时
+                final = re.sub(r"\s*(ok|okay)[\.!?\"]?$", "", text.lower(), flags=re.IGNORECASE).strip()  # 去除触发词
+                resp = assistant.answer(final, None)  # 调用助理
+                add_log("提交已触发")  # 记录提交
+                if resp:
+                    added = False
+                    if isinstance(resp, bytes):
+                        try:
+                            text_resp = resp.decode("utf-8", errors="ignore")  # 尝试UTF-8
+                        except Exception:
+                            text_resp = resp.decode("latin-1", errors="ignore")  # 回退Latin-1
+                    else:
+                        text_resp = str(resp)  # 字符串化
+                    text_resp = text_resp.replace("\r\n", "\n").replace("\r", "\n")  # 规范换行
+                    text_resp = text_resp.replace("\\n", "\n")  # 还原转义
+                    for ln in text_resp.splitlines():  # 分行写入日志
+                        ln = ln.strip()
+                        if ln:
+                            add_log(ln)
+                            added = True
+                    if not added:
+                        add_log(text_resp)  # 原样写入
                 with buffer_lock:
-                    buffer_text = ""
-                last_submit_ts = now_ts
-        return jsonify({"ok": True, "text": text_chunk or ""})
+                    buffer_text = ""  # 清空缓冲
+                last_submit_ts = now_ts  # 更新提交时间
+            return jsonify({"ok": True, "text": text or ""})  # 返回识别文本
     except Exception as e:
         add_log(f"ASR识别异常: {e}")  # 异常日志
         return jsonify({"ok": True, "text": ""})  # 返回空
     return jsonify({"ok": True, "text": ""})  # 默认空返回
 
-@app.route("/api/recognize", methods=["POST"])  # 点击按钮触发以累计文本为准的提交
+@app.route("/api/recognize", methods=["POST"])  # 点击按钮触发整段识别
 def recognize_now():
-    global last_submit_ts, last_chunk_audio, last_chunk_sr, buffer_text  # 使用全局提交时间与最近片段
+    global last_submit_ts  # 使用全局提交时间
     now_ts = time.time()  # 当前时间
-    with buffer_lock:
-        text = buffer_text.strip()  # 直接使用累计文本
-        buffer_text = ""  # 清空缓冲
-    if not text:
-        try:
-            if last_chunk_audio is not None and getattr(last_chunk_audio, "size", 0) > 0:
-                _t0 = time.time()
-                text = asr_model.transcribe_array(last_chunk_audio.astype(np.float32), int(last_chunk_sr or 16000)) or ""
-                dt = time.time() - _t0
-                if text:
-                    add_log(f"识别完成（用时{dt:.2f}秒）")
-            else:
-                text = ""
-        except Exception as e:
-            add_log(f"ASR识别异常: {e}")
-            text = ""
-        if not text:
+    with audio_lock:
+        if not audio_chunks:  # 无累计片段
             return jsonify({"ok": True, "text": ""})
-    submit_text(text)
+        full = np.concatenate(audio_chunks).astype(np.float32)  # 拼接整段
+        audio_chunks.clear()  # 清空
+    full = np.clip(full, -1.0, 1.0)  # 裁剪幅度
+    full = np.ascontiguousarray(full, dtype=np.float32)  # 连续内存
+    try:
+        _t0 = time.time()  # 计时开始
+        text = asr_model.finish_stream()  # 结束流式并识别
+        dt = time.time() - _t0  # 用时
+    except Exception as e:
+        add_log(f"ASR识别异常: {e}")  # 异常日志
+        return jsonify({"ok": True, "text": ""})  # 空返回
+    if not text:  # 无文本
+        return jsonify({"ok": True, "text": ""})
+    text = _sanitize_text(text)  # 清洗文本
+    add_log(f"识别完成（用时{dt:.2f}秒）")  # 记录耗时
+    final = text.lower()  # 转小写
+    resp = assistant.answer(final, None)  # 助理处理
+    add_log("提交已触发")  # 记录提交
+    if resp:
+        added = False
+        if isinstance(resp, bytes):
+            try:
+                text_resp = resp.decode("utf-8", errors="ignore")  # UTF-8
+            except Exception:
+                text_resp = resp.decode("latin-1", errors="ignore")  # 回退
+        else:
+            text_resp = str(resp)  # 字符串化
+        text_resp = text_resp.replace("\r\n", "\n").replace("\r", "\n")  # 规范换行
+        text_resp = text_resp.replace("\\n", "\n")  # 还原转义
+        for ln in text_resp.splitlines():  # 分行日志
+            ln = ln.strip()
+            if ln:
+                add_log(ln)
+                added = True
+        if not added:
+            add_log(text_resp)  # 原样写入
     with buffer_lock:
-        buffer_text = ""
-    last_submit_ts = now_ts
-    return jsonify({"ok": True, "text": text})
+        buffer_text = ""  # 清空缓冲
+    last_submit_ts = now_ts  # 更新提交时间
+    return jsonify({"ok": True, "text": text})  # 返回文本
 
 def run():  # 启动服务器
     port = int(os.getenv("PORT", "5010"))  # 端口
@@ -226,20 +256,11 @@ def run():  # 启动服务器
             pass  # 失败忽略
     except Exception:
         pass  # 环境异常忽略
-    cert = os.getenv("TLS_CERT", "server.crt")  # 证书路径
-    key = os.getenv("TLS_KEY", "server.key")  # 私钥路径
     try:
-        if os.path.exists(cert) and os.path.exists(key):  # 若证书存在，启用HTTPS
-            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            context.load_cert_chain(cert, key)
-            app.run(host="0.0.0.0", port=port, ssl_context=context)
-        else:  # 否则使用HTTP
-            app.run(host="0.0.0.0", port=port)
+        app.run(host="0.0.0.0", port=port)  # 启动
     except OSError:
         alt = 5001 if port == 5000 else 8000  # 备用端口
-        app.run(host="0.0.0.0", port=alt)
-    except Exception as e:
-        add_log(f"服务启动异常: {e}")
+        app.run(host="0.0.0.0", port=alt)  # 启动备用端口
 
 if __name__ == "__main__":  # 主入口
     run()  # 运行

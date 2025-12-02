@@ -1,4 +1,6 @@
 body { font-family: Inter, "Noto Sans SC", -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; margin: 0; padding: 8px; background: #0A0A0A; color: #EAEAEA; }
+.grid, body { max-width: 100vw; overflow-x: hidden; }
+html, body { height: 100%; }
 .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .logo { font-size: 18px; letter-spacing: 0.06em; color: #EAEAEA; text-shadow: 0 0 8px rgba(57,255,20,0.3); }
 .brand { display: flex; align-items: center; gap: 10px; }
@@ -12,7 +14,7 @@ body { font-family: Inter, "Noto Sans SC", -apple-system, BlinkMacSystemFont, Se
 .panel-title { font-size: 14px; margin-bottom: 8px; color: #EAEAEA; }
 .row { display: flex; gap: 8px; margin-top: 10px; }
 video { width: 100%; height: auto; max-height: 35vh; background: #000; border-radius: 8px; outline: 1px solid rgba(57,255,20,0.4); box-shadow: 0 0 12px rgba(57,255,20,0.25); }
-.logs { max-height: 18vh; min-height: 90px; overflow: auto; background: transparent; color: #EAEAEA; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); font-size: 13px; line-height: 1.4; }
+.logs { height: 70vh; min-height: 320px; overflow: auto; background: transparent; color: #EAEAEA; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); font-size: 13px; line-height: 1.4; }
 .hidden { display: none; }
 .ghost-btn { padding: 10px 14px; border: 1px solid rgba(57,255,20,0.4); background: transparent; border-radius: 8px; cursor: pointer; font-size: 14px; color: #EAEAEA; box-shadow: 0 0 12px rgba(57,255,20,0.2); }
 .ghost-btn:hover { box-shadow: 0 0 16px rgba(57,255,20,0.35); }
@@ -29,7 +31,11 @@ video { width: 100%; height: auto; max-height: 35vh; background: #000; border-ra
 
 @media (max-width: 640px) {
   body { padding: 8px; }
+  body { overflow: hidden; }
   .grid { grid-template-columns: 1fr; gap: 10px; }
-  .logs { max-height: 24vh; font-size: 12px; }
+  .logs { height: 66vh; height: 66svh; font-size: 12px; }
+  .row { flex-wrap: wrap; }
   button { width: 100%; }
+  .panel { padding: 8px; }
+  canvas#wave { max-width: 100%; }
 }

@@ -7,6 +7,8 @@ const wave = document.getElementById('wave');
 const logsBox = document.getElementById('logs');
 const secureWarn = document.getElementById('secureWarn');
 
+let lastLogsSig = '';
+
 function logClient(msg) {
   const div = document.createElement('div');
   div.textContent = `[client] ${msg}`;
@@ -193,8 +195,12 @@ function fetchLogs() {
   fetch('/api/logs').then(r => r.json()).then(d => {
     const liveBox = document.getElementById('live');
     if (liveBox) liveBox.textContent = d.live || '';
-    logsBox.innerHTML = d.logs.map(x => `<div>${x}</div>`).join('') + '<div class="blockline"></div>';
-    logsBox.scrollTop = logsBox.scrollHeight;
+    const logsSig = JSON.stringify(d.logs || []);
+    if (logsSig !== lastLogsSig) {
+      logsBox.innerHTML = (d.logs || []).map(x => `<div>${x}</div>`).join('') + '<div class="blockline"></div>';
+      logsBox.scrollTop = logsBox.scrollHeight;
+      lastLogsSig = logsSig;
+    }
   });
 }
 

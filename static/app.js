@@ -62,11 +62,9 @@ function drawWave() {
   function resizeWave() {
     const dpr = window.devicePixelRatio || 1;
     const w = wave.parentElement.clientWidth || window.innerWidth;
-    const vh = window.innerHeight || 600;
-    const isMobile = w <= 640;
+    const parentH = wave.parentElement.clientHeight || Math.floor((window.innerHeight || 600) * 0.26);
     wave.width = Math.floor(w * dpr);
-    let hpx = Math.floor(vh * 0.30);
-    if (isMobile) hpx = Math.floor(vh * 0.26);
+    let hpx = parentH;
     wave.height = Math.max(Math.floor(60 * dpr), Math.floor(hpx * dpr));
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }

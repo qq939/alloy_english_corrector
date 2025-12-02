@@ -193,7 +193,7 @@ function fetchLogs() {
   fetch('/api/logs').then(r => r.json()).then(d => {
     const liveBox = document.getElementById('live');
     if (liveBox) liveBox.textContent = d.live || '';
-    logsBox.innerHTML = d.logs.map(x => `<div>${x}</div>`).join('');
+    logsBox.innerHTML = d.logs.map(x => `<div>${x}</div>`).join('') + '<div class="blockline"></div>';
     logsBox.scrollTop = logsBox.scrollHeight;
   });
 }
@@ -212,6 +212,12 @@ if (btnRecognize) {
         .then(_ => fetchLogs())
         .finally(() => { btnRecognize.disabled = false; });
     }, 150);
+  });
+}
+const btnDownload = document.getElementById('downloadSubmits');
+if (btnDownload) {
+  btnDownload.addEventListener('click', function(){
+    window.location.href = '/api/download_submissions';
   });
 }
 setInterval(fetchLogs, 1000);

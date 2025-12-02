@@ -17,6 +17,7 @@ video { width: 100%; height: auto; max-height: 35vh; background: #000; border-ra
 .logs { height: 70vh; min-height: 320px; overflow: auto; background: transparent; color: #EAEAEA; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); font-size: 13px; line-height: 1.4; }
 .livebar { min-height: 56px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); border-radius: 8px; font-size: 14px; line-height: 1.5; color: #EAEAEA; background: rgba(0,0,0,0.15); white-space: pre-wrap; }
 .divider { height: 1px; background: rgba(255,255,255,0.15); margin: 6px 0 10px; }
+.blockline { height: 1px; background: rgba(255,255,255,0.18); margin-top: 6px; }
 .hidden { display: none; }
 .ghost-btn { padding: 10px 14px; border: 1px solid rgba(57,255,20,0.4); background: transparent; border-radius: 8px; cursor: pointer; font-size: 14px; color: #EAEAEA; box-shadow: 0 0 12px rgba(57,255,20,0.2); }
 .ghost-btn:hover { box-shadow: 0 0 16px rgba(57,255,20,0.35); }
@@ -38,6 +39,7 @@ video { width: 100%; height: auto; max-height: 35vh; background: #000; border-ra
   .logs { height: 66vh; height: 66svh; font-size: 12px; }
   .livebar { min-height: 48px; font-size: 13px; }
   .divider { margin: 6px 0 8px; }
+  .blockline { margin-top: 6px; }
   .row { flex-wrap: wrap; }
   button { width: 100%; }
   .panel { padding: 8px; }

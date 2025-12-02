@@ -34,6 +34,9 @@ log_once_lock = threading.Lock()  # 日志一次性锁
 last_submit_ts = 0.0  # 上次提交时间
 SUBMIT_COOLDOWN = 2.0
 
+submissions = []  # 累计提交的文本内容（用于下载）
+last_submit_lines = []  # 最近一次提交的展示内容（用于日志面板）
+
 recognizer = None  # 保留占位，不再使用轻量触发词识别
 
 def _sanitize_text(s: str) -> str:  # 文本清洗
@@ -71,16 +74,20 @@ def add_log(s):  # 统一日志追加
         del logs[: len(logs) - 200]  # 限制长度
 
 def submit_text(text: str, dt: float | None = None, strip_ok: bool = False) -> None:
+    global last_submit_lines, submissions
     if not text:
         return
     if strip_ok:
         text = re.sub(r"\s*(ok|okay)[\.!?\"]?$", "", text, flags=re.IGNORECASE).strip()
     text = _sanitize_text(text)
+    
     if dt is not None:
         add_log(f"识别完成（用时{dt:.2f}秒）")
     final = text.lower()
     resp = assistant.answer(final, None)
     add_log("提交已触发")
+    lines_for_display = []
+    assistant_text = ""
     if resp:
         added = False
         if isinstance(resp, bytes):
@@ -92,13 +99,26 @@ def submit_text(text: str, dt: float | None = None, strip_ok: bool = False) -> N
             text_resp = str(resp)
         text_resp = text_resp.replace("\r\n", "\n").replace("\r", "\n")
         text_resp = text_resp.replace("\\n", "\n")
+        assistant_text = text_resp.strip()
         for ln in text_resp.splitlines():
             ln = ln.strip()
             if ln:
                 add_log(ln)
+                lines_for_display.append(ln)
                 added = True
         if not added:
             add_log(text_resp)
+            lines_for_display = [text_resp]
+    else:
+        lines_for_display = [text]
+    try:
+        last_submit_lines = lines_for_display
+    except Exception:
+        pass
+    try:
+        submissions.append({"ts": time.time(), "recognized": text, "assistant": assistant_text})
+    except Exception:
+        pass
 
 @app.route("/")  # 首页
 def index():
@@ -108,7 +128,31 @@ def index():
 def get_logs():
     with buffer_lock:
         live = buffer_text
-    return jsonify({"logs": logs[-100:], "live": live})
+    return jsonify({"logs": last_submit_lines, "live": live})
+
+@app.route("/api/download_submissions")
+def download_submissions():
+    try:
+        parts = []
+        for item in submissions:
+            ts = item.get("ts")
+            rec = str(item.get("recognized", ""))
+            asst = str(item.get("assistant", ""))
+            header = f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))}]" if ts else ""
+            block = [header]
+            if rec:
+                block.append(f"识别: {rec}")
+            if asst:
+                block.append(f"提交: {asst}")
+            block.append("----------------------------------------")
+            parts.append("\n".join([x for x in block if x]))
+        content = "\n\n".join(parts)
+    except Exception:
+        content = ""
+    from flask import Response
+    resp = Response(content, mimetype="text/plain; charset=utf-8")
+    resp.headers["Content-Disposition"] = "attachment; filename=submissions.txt"
+    return resp
 
 @app.route("/api/audio", methods=["POST"])  # 音频上传并流式识别（按片返回文本）
 def upload_audio():

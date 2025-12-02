@@ -14,6 +14,7 @@ from scipy.io import wavfile  # 读写WAV
 from funasr_model import FunASRModel  # 引入funASR模型封装
 from assistant import assistant  # 文本助理
 import re  # 文本正则
+import ssl
 
 app = Flask(__name__, static_folder="static", template_folder="templates")  # Flask应用
 app.config["JSON_AS_ASCII"] = False  # 返回JSON允许中文
@@ -223,6 +224,9 @@ def run():  # 启动服务器
     except Exception:
         pass  # 环境异常忽略
     try:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain('server.crt', 'server.key')
+        app.run(host="0.0.0.0", port=port, ssl_context=context)  # 启动
         app.run(host="0.0.0.0", port=port)  # 启动
     except OSError:
         alt = 5001 if port == 5000 else 8000  # 备用端口

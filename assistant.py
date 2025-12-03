@@ -179,9 +179,10 @@ class Assistant:
         You are an English teacher. Always respond in ENGLISH ONLY.
         If the user's sentence is not English, translate it to English first, then provide the corrected English sentence.
         Remove interjections and repetitive parts if necessary; fix mispronunciations (e.g., "walking" vs "working").
-        Output format (strict):
-        Original    sentence: <English sentence>
-        Replacement sentence: <Corrected English sentence>
+        Output format (strict), Align with colons:
+        Original****sentence: <English sentence>
+        Replacement*sentence: <Corrected English sentence>
+        ----------------------------------------
         """
         # 英语老师
         prompt_template = ChatPromptTemplate.from_messages(
@@ -210,9 +211,11 @@ class Assistant:
         - If no word replaced, return an empty list
         - Drop words shorter than 6 chars
         - Drop words not nouns/verbs/adjectives, or overly basic beginner words
-        Format:
-        Replacement words: word1, word2, word3
-        中文解释: 解释1, 解释2, 解释3
+        Format,Align with colons:
+        ----------------------------------------
+        Replacement*words: word1, word2, word3
+        *中***文***解***释*: 解释1, 解释2, 解释3
+        ----------------------------------------
         """
         
         # 词汇

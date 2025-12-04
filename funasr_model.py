@@ -18,6 +18,7 @@ class FunASRModel:
             if env_punc:
                 punc_model = env_punc
             aliases = {
+                "small": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
                 "paraformer-zh": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
             }
             model_name = aliases.get(model_name, model_name)

@@ -12,6 +12,8 @@ import time  # 时间与计时
 import numpy as np  # 数值计算
 from scipy.io import wavfile  # 读写WAV
 from whisper_streaming import WhisperStreamingModel
+from funasr_model import FunASRModel
+
 from assistant import assistant  # 文本助理
 import re  # 文本正则
 import ssl
@@ -19,7 +21,13 @@ import ssl
 app = Flask(__name__, static_folder="static", template_folder="templates")  # Flask应用
 app.config["JSON_AS_ASCII"] = False  # 返回JSON允许中文
 
+
 asr_model = WhisperStreamingModel("small")
+# asr_model = FunASRModel("small")
+
+
+
+
 
 buffer_text = ""  # 缓冲文本
 last_chunk_audio = None

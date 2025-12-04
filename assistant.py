@@ -103,7 +103,7 @@ class Assistant:
         logger.info(f"{input_data['llm_output']}")
         lines = input_data["llm_output"].strip().split("\n")
         for line in lines:
-            if "Replacement words:" not in line:
+            if "Replacement*words:" not in line:
                 words = []
                 continue
             words_part = line.split("Replacement words:")[-1].strip()
@@ -234,8 +234,8 @@ class Assistant:
         SYSTEM_PROMPT3 =\
         """
         You are a data analyst try to find some word is or is not in the system message of chat_history.
-        If current_replacement_words is empty, just don't give any answers.
-        If the word in current_replacement_words is already in system message and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
+        If Replacement*words is empty, just don't give any answers.
+        If the word in Replacement*words is already in system message and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
         If not, just don't give any answers.
         Give the concise answers.
         """
@@ -249,7 +249,7 @@ class Assistant:
                     # MessagesPlaceholder(variable_name="chat_history"),
                     [
                         {"type": "text", "text": "chat_history: {chat_history}"},
-                        {"type": "text", "text": "current_replacement_words: {current_replacement_words}"},
+                        {"type": "text", "text": "current_replacement_words: {llm_output}"},
                     ],
                 ),
             ]

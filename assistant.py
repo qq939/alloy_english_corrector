@@ -249,7 +249,7 @@ class Assistant:
                     # MessagesPlaceholder(variable_name="chat_history"),
                     [
                         {"type": "text", "text": "chat_history: {chat_history}"},
-                        {"type": "text", "text": "current_replacement_words: {llm_output}"},
+                        {"type": "text", "text": "Replacement*words: {llm_output}"},
                     ],
                 ),
             ]

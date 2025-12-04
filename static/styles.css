@@ -17,7 +17,7 @@ video { width: 100%; height: auto; max-height: 35vh; background: #000; border-ra
 .audio { display: flex; flex-direction: column; min-height: 0; }
 .wavebox { flex: 1; min-height: 0; }
 .logs-panel { display: flex; flex-direction: column; min-height: 0; }
-.logs { flex: 1; min-height: 0; overflow: auto; background: transparent; color: #EAEAEA; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); font-size: 13px; line-height: 1.4; }
+.logs { flex: 1; min-height: 0; overflow: auto; background: transparent; color: #EAEAEA; padding: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); font-size: 16px; line-height: 1.4; }
 .livebar { min-height: 56px; padding: 8px 10px; border: 1px solid rgba(255,255,255,0.08); box-shadow: inset 0 0 10px rgba(255,255,255,0.08); border-radius: 8px; font-size: 14px; line-height: 1.5; color: #EAEAEA; background: rgba(0,0,0,0.15); white-space: pre-wrap; }
 .divider { height: 1px; background: rgba(255,255,255,0.15); margin: 6px 0 10px; }
 .blockline { height: 1px; background: rgba(255,255,255,0.18); margin-top: 6px; }
@@ -39,7 +39,7 @@ video { width: 100%; height: auto; max-height: 35vh; background: #000; border-ra
   body { padding: 8px; }
   body { overflow: hidden; }
   .grid { grid-template-columns: 1fr; gap: 10px; height: calc(100svh - 80px); grid-template-rows: 3fr 7fr; }
-  .logs { font-size: 12px; }
+  .logs { font-size: 15px; }
   .livebar { min-height: 48px; font-size: 13px; }
   .divider { margin: 6px 0 8px; }
   .blockline { margin-top: 6px; }

@@ -11,7 +11,7 @@ import threading  # 线程与锁
 import time  # 时间与计时
 import numpy as np  # 数值计算
 from scipy.io import wavfile  # 读写WAV
-from funasr_model import FunASRModel  # 引入funASR模型封装
+from whisper_streaming import WhisperStreamingModel
 from assistant import assistant  # 文本助理
 import re  # 文本正则
 import ssl
@@ -19,9 +19,11 @@ import ssl
 app = Flask(__name__, static_folder="static", template_folder="templates")  # Flask应用
 app.config["JSON_AS_ASCII"] = False  # 返回JSON允许中文
 
-asr_model = FunASRModel("paraformer-zh")  # 初始化funASR模型
+asr_model = WhisperStreamingModel("small")
 
 buffer_text = ""  # 缓冲文本
+last_chunk_audio = None
+last_chunk_sr = 16000
 buffer_lock = threading.Lock()  # 缓冲锁
 speaking_active = False  # 说话状态
 speaking_last_ts = 0.0  # 最近说话时间戳
@@ -210,25 +212,33 @@ def upload_audio():
         rms = float(np.sqrt(np.mean(np.square(arr)))) if arr is not None and arr.size else 0.0  # 能量
         if (not speaking_active) and (dur < MIN_SPEECH_DURATION and rms < MIN_SPEECH_RMS):  # 过滤短/弱片段
             return jsonify({"ok": True, "text": ""})
-        speaking_active = True  # 标记说话态
+
         speaking_last_ts = now_ts  # 更新时间戳
         last_chunk_audio = arr.astype(np.float32)  # 记录最近片段供按钮兜底识别
         last_chunk_sr = int(sr_rate)
-        _t0 = time.time()  # 开始计时
-        text_chunk = asr_model.transcribe_array(arr.astype(np.float32), sr_rate)  # 直接对当前片段做识别
-        dt = time.time() - _t0  # 识别耗时
+        if not speaking_active:
+            asr_model.start_stream(sr_rate)
+            speaking_active = True
+        _t0 = time.time()
+        asr_model.push_array(arr.astype(np.float32), sr_rate)
+        text_chunk = asr_model.partial_transcribe() or ""
+        dt = time.time() - _t0
         if text_chunk:
             with buffer_lock:
-                buffer_text = (buffer_text + " " + text_chunk).strip()  # 累积流式识别文本
-            b_all = buffer_text.lower()
-            ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]?$", b_all)  # 末尾触发词检测
-            if ((" ok" in b_all) or (" okay" in b_all) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
-                # ok触发提交
-                submit_text(b_all, dt=dt, strip_ok=True)
-                with buffer_lock:
-                    buffer_text = ""
-                last_submit_ts = now_ts
-        return jsonify({"ok": True, "text": text_chunk or ""})
+                buffer_text = text_chunk.strip()     
+                # buffer_text = (buffer_text + " " + text_chunk).strip()
+        b_all = (buffer_text or "").lower()
+        ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]*", b_all)
+        if ((" ok" in b_all) or (" okay" in b_all) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
+            _t1 = time.time()
+            final_text = asr_model.finish_stream() or ""
+            speaking_active = False
+            dt2 = time.time() - _t1
+            submit_text(final_text, dt=dt2, strip_ok=True)
+            with buffer_lock:
+                buffer_text = ""
+            last_submit_ts = now_ts
+        return jsonify({"ok": True, "text": text_chunk})
     except Exception as e:
         add_log(f"ASR识别异常: {e}")  # 异常日志
         return jsonify({"ok": True, "text": ""})  # 返回空
@@ -245,7 +255,9 @@ def recognize_now():
         try:
             if last_chunk_audio is not None and getattr(last_chunk_audio, "size", 0) > 0:
                 _t0 = time.time()
-                text = asr_model.transcribe_array(last_chunk_audio.astype(np.float32), int(last_chunk_sr or 16000)) or ""
+                asr_model.start_stream(int(last_chunk_sr or 16000))
+                asr_model.push_array(last_chunk_audio.astype(np.float32), int(last_chunk_sr or 16000))
+                text = asr_model.finish_stream() or ""
                 dt = time.time() - _t0
                 if text:
                     add_log(f"识别完成（用时{dt:.2f}秒）")
@@ -265,13 +277,15 @@ def recognize_now():
 def run():  # 启动服务器
     port = int(os.getenv("PORT", "5010"))  # 端口
     try:
-        _warm = np.zeros(16000, dtype=np.float32)  # 预热数组
+        _warm = np.zeros(16000, dtype=np.float32)
         try:
-            asr_model.transcribe_array(_warm, 16000)  # 模型预热
+            asr_model.start_stream(16000)
+            asr_model.push_array(_warm, 16000)
+            asr_model.finish_stream()
         except Exception:
-            pass  # 失败忽略
+            pass
     except Exception:
-        pass  # 环境异常忽略
+        pass
     cert = os.getenv("TLS_CERT", "server.crt")  # 证书路径
     key = os.getenv("TLS_KEY", "server.key")  # 私钥路径
     try:

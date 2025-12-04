@@ -160,6 +160,14 @@ class FunASRModel:
         audio = np.asarray(audio)
         self.push_array(audio.astype(np.float32) if audio.dtype != np.float32 else audio, int(rate))
 
+    def partial_transcribe(self) -> str:
+        """对当前累计的音频做一次中文转写（不中断流）。"""
+        self._ensure_ready()
+        full = np.concatenate(self._stream_chunks).astype(np.float32)
+        sr = self._stream_sr or 16000
+        out = self._auto.generate(input=full, sample_rate=sr, is_streaming=True)
+        return self._extract_text(out)
+
     def finish_stream(self) -> str:
         if not self._streaming or not self._stream_chunks:
             self._streaming = False

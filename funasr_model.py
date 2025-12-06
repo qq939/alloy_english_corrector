@@ -6,7 +6,7 @@ from scipy.io import wavfile
 from typing import List, Optional
 
 class FunASRModel:    
-    def __init__(self, model_name: str = "paraformer-zh", vad_model: Optional[str] = "fsmn-vad", punc_model: Optional[str] = None, device: Optional[str] = None):
+    def __init__(self, model_name: str = "paraformer-zh", vad_model: Optional[str] = "fsmn-vad", punc_model: Optional[str] = None, device: Optional[str] = None, window_sec: float = 8.0):
         try:
             env_model = os.getenv("FUNASR_MODEL")
             env_vad = os.getenv("FUNASR_VAD_MODEL")
@@ -31,6 +31,8 @@ class FunASRModel:
         self._stream_chunks: List[np.ndarray] = []
         self._stream_sr: Optional[int] = None
         self._streaming: bool = False
+        self.language: str = "zh"
+        self._window_sec: float = float(max(1.0, window_sec))
 
     def _normalize(self, x: np.ndarray) -> np.ndarray:
         orig = x.dtype
@@ -163,11 +165,34 @@ class FunASRModel:
 
     def partial_transcribe(self) -> str:
         """对当前累计的音频做一次中文转写（不中断流）。"""
+        if not self._stream_chunks:
+            return ""
+        sr = int(self._stream_sr or 16000)
+        need = int(sr * self._window_sec)
+        acc = []
+        got = 0
+        for c in reversed(self._stream_chunks):
+            if not getattr(c, "size", 0):
+                continue
+            acc.append(c)
+            got += c.size
+            if got >= need:
+                break
+        if not acc:
+            return ""
+        tail = np.concatenate(list(reversed(acc))).astype(np.float32)
+        if tail.size > need:
+            tail = tail[-need:]
+        x = self._prepare(tail, sr)
+        y = (np.clip(x, -1.0, 1.0) * 32767.0).astype(np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            wavfile.write(tmp.name, 16000, y)
+            path = tmp.name
+        
         self._ensure_ready()
-        full = np.concatenate(self._stream_chunks).astype(np.float32)
-        sr = self._stream_sr or 16000
-        out = self._auto.generate(input=full, sample_rate=sr, is_streaming=True)
+        out = self._auto.generate(input=path, is_streaming=True)
         return self._extract_text(out)
+
 
     def finish_stream(self) -> str:
         if not self._streaming or not self._stream_chunks:

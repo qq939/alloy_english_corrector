@@ -227,14 +227,13 @@ def upload_audio():
         if not speaking_active:
             asr_model.start_stream(sr_rate)
             speaking_active = True
-        _t0 = time.time()
         asr_model.push_array(arr.astype(np.float32), sr_rate)
+        _t0 = time.time()
         text_chunk = asr_model.partial_transcribe() or ""
-        dt = time.time() - _t0
         if text_chunk:
             with buffer_lock:
-                buffer_text = text_chunk.strip()     
-                # buffer_text = (buffer_text + " " + text_chunk).strip()
+                # buffer_text = text_chunk.strip()     
+                buffer_text = (buffer_text + " " + text_chunk).strip()
         b_all = (buffer_text or "").lower()
         ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]*", b_all)
         if ((" ok" in b_all) or (" okay" in b_all) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
@@ -243,10 +242,8 @@ def upload_audio():
             speaking_active = False
             dt2 = time.time() - _t1
             submit_text(final_text, dt=dt2, strip_ok=True)
-            with buffer_lock:
-                buffer_text = ""
             last_submit_ts = now_ts
-        return jsonify({"ok": True, "text": text_chunk})
+        return jsonify({"ok": True, "text": buffer_text})
     except Exception as e:
         add_log(f"ASR识别异常: {e}")  # 异常日志
         return jsonify({"ok": True, "text": ""})  # 返回空
@@ -277,8 +274,6 @@ def recognize_now():
         if not text:
             return jsonify({"ok": True, "text": ""})
     submit_text(text)
-    with buffer_lock:
-        buffer_text = ""
     last_submit_ts = now_ts
     return jsonify({"ok": True, "text": text})
 

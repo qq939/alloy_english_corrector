@@ -11,13 +11,14 @@ import whisper  # OpenAI Whisper 推理
 
 class WhisperStreamingModel:
     """Whisper 英文流式识别模型。"""
-    def __init__(self, model_size: str = "small"):
+    def __init__(self, model_size: str = "small", window_sec: float = 8.0):
         """初始化并加载模型，model_size 可为 "small" 或 "large-v3"。"""
-        self.model = whisper.load_model(model_size)  # 加载指定大小的模型
-        self.language = "en"  # 固定识别目标语言为英语
-        self._stream_chunks = []  # 累计的流式音频片段（16k, float32, 单声道）
-        self._stream_sr = None  # 流式采样率记录（用于预处理）
-        self._streaming = False  # 是否处于流式会话中
+        self.model = whisper.load_model(model_size)
+        self.language = "en"
+        self._stream_chunks = []
+        self._stream_sr = None
+        self._streaming = False
+        self._window_sec = float(max(1.0, window_sec))
 
     def _normalize(self, x: np.ndarray) -> np.ndarray:
         """将输入数组归一化为 float32 [-1, 1] 区间。"""
@@ -89,12 +90,27 @@ class WhisperStreamingModel:
 
     def partial_transcribe(self) -> str:
         """对当前累计的音频做一次英文转写（不中断流）。"""
-        if not self._stream_chunks:  # 无数据则返回空
+        if not self._stream_chunks:
             return ""
-        full = np.concatenate(self._stream_chunks).astype(np.float32)  # 合并片段
-        x = self._prepare(full, self._stream_sr or 16000)  # 预处理
-        result = self.model.transcribe(x, language=self.language, task="translate")  # 英文翻译
-        return (result.get("text") or "").strip()  # 返回文本
+        sr = int(self._stream_sr or 16000)
+        need = int(sr * self._window_sec)
+        acc = []
+        got = 0
+        for c in reversed(self._stream_chunks):
+            if not getattr(c, "size", 0):
+                continue
+            acc.append(c)
+            got += c.size
+            if got >= need:
+                break
+        if not acc:
+            return ""
+        tail = np.concatenate(list(reversed(acc))).astype(np.float32)
+        if tail.size > need:
+            tail = tail[-need:]
+        x = self._prepare(tail, sr)
+        result = self.model.transcribe(x, language=self.language, task="transcribe")
+        return (result.get("text") or "").strip()
 
     def finish_stream(self) -> str:
         """结束会话并返回最终英文文本。"""

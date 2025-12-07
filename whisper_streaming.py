@@ -91,7 +91,7 @@ class WhisperStreamingModel:
     def partial_transcribe(self) -> str:
         """对当前累计的音频做一次英文转写（不中断流）。"""
         if not self._stream_chunks:
-            return ""
+            return {"text":"", "offset":0.0}
         sr = int(self._stream_sr or 16000)
         need = int(sr * self._window_sec)
         acc = []
@@ -104,13 +104,14 @@ class WhisperStreamingModel:
             if got >= need:
                 break
         if not acc:
-            return ""
+            return {"text":"", "offset":0.0}
         tail = np.concatenate(list(reversed(acc))).astype(np.float32)
         if tail.size > need:
             tail = tail[-need:]
         x = self._prepare(tail, sr)
         result = self.model.transcribe(x, language=self.language, task="transcribe")
-        return (result.get("text") or "").strip()
+        result["seconds"] = float(len(acc))
+        return result
 
     def finish_stream(self) -> str:
         """结束会话并返回最终英文文本。"""
@@ -119,11 +120,11 @@ class WhisperStreamingModel:
             self._stream_chunks = []
             self._stream_sr = None
             return ""
-        full = np.concatenate(self._stream_chunks).astype(np.float32)  # 合并片段
-        self._stream_chunks = []  # 清空缓存
-        sr = self._stream_sr or 16000  # 采样率
-        x = self._prepare(full, sr)  # 预处理
-        result = self.model.transcribe(x, language=self.language, task="transcribe")  # 英文转写
+        # full = np.concatenate(self._stream_chunks).astype(np.float32)  # 合并片段
+        # self._stream_chunks = []  # 清空缓存
+        # sr = self._stream_sr or 16000  # 采样率
+        # x = self._prepare(full, sr)  # 预处理
+        # result = self.model.transcribe(x, language=self.language, task="transcribe")  # 英文转写
         self._streaming = False  # 标记结束
         self._stream_sr = None  # 清理采样率
         return (result.get("text") or "").strip()  # 返回文本

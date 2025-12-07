@@ -17,21 +17,28 @@ from funasr_model import FunASRModel
 from assistant import assistant  # 文本助理
 import re  # 文本正则
 import ssl
+import logging
+
+
 
 app = Flask(__name__, static_folder="static", template_folder="templates")  # Flask应用
 app.config["JSON_AS_ASCII"] = False  # 返回JSON允许中文
-
+handler = logging.FileHandler("funasr_server.log", encoding="utf-8")
+handler.setFormatter(logging.Formatter("%(message)s %(asctime)s"))
+app.logger.addHandler(handler)
+app.logger.setLevel(logging.DEBUG)
+app.logger.debug("ok")
 
 asr_model = WhisperStreamingModel("small")
 # asr_model = FunASRModel("small")
 
 
-
-
-
 buffer_text = ""  # 缓冲文本
 last_chunk_audio = None
 last_chunk_sr = 16000
+last_partial_text = ""
+last_partial_offset = None
+last_words = []
 buffer_lock = threading.Lock()  # 缓冲锁
 speaking_active = False  # 说话状态
 speaking_last_ts = 0.0  # 最近说话时间戳
@@ -67,6 +74,38 @@ def _sanitize_text(s: str) -> str:  # 文本清洗
     s = re.sub(r"(\b\w+\b)(?:\s+\1\b){1,}", r"\1", s, flags=re.I)  # 连续词去重
     s = re.sub(r"(\b\w+\b[\.\!\?])(?:\s+\1){1,}", r"\1", s, flags=re.I)  # 句子去重
     return s
+
+def _append_chunk_offset(base: str, prev_text: str, prev_offset, cur_text: str, cur_offset) -> str:
+    app.logger.debug("cur_text:" + cur_text)
+    cur = (cur_text or "").strip()
+    if not cur:
+        return base or ""
+    eps = 1e-3
+    # 优先按偏移处理：窗口回退则视为新的段，窗口前进则按前缀差异增量
+    if prev_text:
+        if (prev_offset is not None) and (cur_offset is not None):
+            if float(cur_offset) + eps < float(prev_offset):
+                tail = base[-len(cur):] if base else ""
+                n = min(len(tail), len(cur))
+                i = 0
+                while i < n and tail[i] == cur[i]:
+                    i += 1
+                delta = cur[i:].strip()
+                if not delta:
+                    return base or ""
+                return (base + (" " if base else "") + delta).strip()
+            else:
+                prev = (prev_text or "").strip()
+                n = min(len(prev), len(cur))
+                i = 0
+                while i < n and prev[i] == cur[i]:
+                    i += 1
+                delta = cur[i:].strip()
+                if not delta:
+                    return base or ""
+                return (base + (" " if base else "") + delta).strip()
+    # 无前一段，直接追加当前段
+    return (base + (" " if base else "") + cur).strip()
 
 def add_log(s):  # 统一日志追加
     if isinstance(s, bytes):
@@ -166,7 +205,7 @@ def download_submissions():
 
 @app.route("/api/audio", methods=["POST"])  # 音频上传并流式识别（按片返回文本）
 def upload_audio():
-    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, recognizer, last_chunk_audio, last_chunk_sr  # 使用全局状态
+    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, recognizer, last_chunk_audio, last_chunk_sr, last_partial_offset, last_partial_text # 使用全局状态
     file_raw = request.files.get("audio_raw")  # PCM16文件
     file_wav = request.files.get("audio")  # WAV文件
     if not file_raw and not file_wav:  # 无文件
@@ -229,20 +268,34 @@ def upload_audio():
             speaking_active = True
         asr_model.push_array(arr.astype(np.float32), sr_rate)
         _t0 = time.time()
-        text_chunk = asr_model.partial_transcribe() or ""
-        if text_chunk:
+        chunk = asr_model.partial_transcribe()
+        if chunk:
+            try:
+                cur_text = (chunk.get("text") or "").strip() if isinstance(chunk, dict) else str(chunk or "").strip()
+            except Exception:
+                cur_text = str(chunk or "").strip()
+            try:
+                cur_offset = float(chunk.get("offset") or 0.0) if isinstance(chunk, dict) else None
+            except Exception:
+                cur_offset = None
+            app.logger.debug("Before Lock text"+cur_text)
+            app.logger.debug("Before Lock offset"+str(cur_offset))
             with buffer_lock:
-                # buffer_text = text_chunk.strip()     
-                buffer_text = (buffer_text + " " + text_chunk).strip()
+                buffer_text = _append_chunk_offset(buffer_text, last_partial_text, last_partial_offset, cur_text, cur_offset)
+            last_partial_text = cur_text
+            last_partial_offset = cur_offset
         b_all = (buffer_text or "").lower()
         ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]*", b_all)
         if ((" ok" in b_all) or (" okay" in b_all) or ends_ok) and (now_ts - last_submit_ts) > SUBMIT_COOLDOWN:
             _t1 = time.time()
-            final_text = asr_model.finish_stream() or ""
+            res = asr_model.finish_stream()
+            final_text = (res.get("text") or "").strip() if isinstance(res, dict) else str(res or "").strip()
             speaking_active = False
             dt2 = time.time() - _t1
             submit_text(final_text, dt=dt2, strip_ok=True)
             last_submit_ts = now_ts
+            last_words = []
+            buffer_text = ""
         return jsonify({"ok": True, "text": buffer_text})
     except Exception as e:
         add_log(f"ASR识别异常: {e}")  # 异常日志

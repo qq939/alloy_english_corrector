@@ -76,109 +76,112 @@ def _sanitize_text(s: str) -> str:
 
 def _append_chunk(base: str, prev_text: str, cur_text: str) -> str:
     """
-    基于滑动窗口的文本拼接逻辑。
-    核心目标：找到 prev_text 的后缀与 cur_text 的前缀之间的最大重叠，
-    然后将 cur_text 中不重叠的后缀部分追加到 base。
+    智能拼接：基于单词粒度寻找最大重叠，容忍 cur 前缀的微小变化 (Fuzzy Overlap)，
+    并进行重复短语去除。
     """
     cur = (cur_text or "").strip()
     prev = (prev_text or "").strip()
     
     if not cur:
         return base or ""
-    
     if not prev:
-        # 如果没有前一段文本，直接追加当前文本
         return (base + (" " if base else "") + cur).strip()
 
-    # 1. 简单的包含关系检查
-    # 如果当前文本完全包含在前一段中（例如说话停顿，窗口只移动了一点点，识别结果可能变短或不变）
-    # 或者前一段完全包含在当前文本中（例如窗口刚开始扩大）
-    # 但对于滑动窗口，通常是部分重叠。
-    
-    # 为了比较鲁棒性，去除标点和大小写进行重叠计算
-    def normalize(s):
-        return re.sub(r"[^\w\s]", "", s).lower().replace("\s+", "")
+    # --- 1. 单词粒度拆分 ---
+    def tokenize(text):
+        tokens = []
+        for m in re.finditer(r"\b[\w']+\b", text):
+            tokens.append((m.group(0).lower(), m.start(), m.end()))
+        return tokens
 
-    # 我们从可能的最大重叠长度开始尝试，直到0
-    # 重叠长度最多是 len(prev) 和 len(cur) 的较小值
-    n = min(len(prev), len(cur))
+    prev_tokens = tokenize(prev)
+    cur_tokens = tokenize(cur)
+    
+    # --- 2. 寻找最大重叠 (Fuzzy Search) ---
+    n_prev = len(prev_tokens)
+    n_cur = len(cur_tokens)
+    
+    # 我们希望找到 prev 的后缀 在 cur 的前缀中的位置
+    # 允许 cur 开头有一些 token 不匹配 (skip)，这是为了处理 Whisper 输出的不稳定性
+    
     best_overlap_len = 0
+    best_cur_start_idx = 0 
     
-    # 暴力搜索最大后缀-前缀重叠 (Longest Suffix-Prefix Overlap)
-    # 优化：只检查最后N个字符，避免全文搜索
-    # 实际上对于几秒的文本，直接遍历开销很小
+    # 限制搜索范围：允许 cur 开头跳过最多 15 个词来寻找匹配
+    search_window_size = 15 
     
-    # 这里的逻辑是：prev 的后 k 个字符 == cur 的前 k 个字符
-    for k in range(n, 0, -1):
-        # 这是一个严格匹配，为了更好的效果，可能需要 fuzzy match，
-        # 但严格匹配对于避免重复最安全。
-        # 我们比较 prev 的后缀和 cur 的前缀
-        if prev.endswith(cur[:k]):
-            best_overlap_len = k
+    # 从最长可能重叠开始尝试
+    max_search = min(n_prev, n_cur)
+    
+    for k in range(max_search, 0, -1):
+        # 目标：prev 的最后 k 个词
+        target_tokens = [t[0] for t in prev_tokens[n_prev-k:]]
+        
+        # 在 cur 的前 (k + search_window_size) 个词中寻找 target
+        found = False
+        # 尝试在 cur[0] ... cur[search_window] 开始匹配
+        # 确保索引不越界
+        limit = min(search_window_size, n_cur - k + 1)
+        for start_idx in range(limit):
+            # 比较 cur[start_idx : start_idx+k]
+            sub_cur = [t[0] for t in cur_tokens[start_idx : start_idx+k]]
+            if sub_cur == target_tokens:
+                best_overlap_len = k
+                best_cur_start_idx = start_idx
+                found = True
+                break
+        if found:
             break
             
-    # 如果严格匹配失败，尝试用标准化后的文本再试一次（处理标点抖动问题）
-    if best_overlap_len == 0 and n > 3:
-        # 定义简单的标准化：小写 + 去除标点和空格，只保留字母数字
-        def clean(s): return re.sub(r"[^\w]", "", s).lower()
-        c_prev = clean(prev)
-        c_cur = clean(cur)
-        
-        nn = min(len(c_prev), len(c_cur))
-        norm_overlap_len = 0
-        
-        # 寻找归一化后的最大重叠
-        for k in range(nn, 0, -1):
-            if c_prev.endswith(c_cur[:k]):
-                norm_overlap_len = k
-                break
-        
-        # 如果找到了归一化重叠，需要映射回原始字符串 cur 的索引
-        if norm_overlap_len > 0:
-            current_norm_len = 0
-            real_idx = 0
-            for char in cur:
-                # 这里的逻辑必须与 clean 函数一致：如果是有效字符则计数
-                if re.match(r"[\w]", char): 
-                    current_norm_len += 1
-                real_idx += 1 # 原始索引前移
-                
-                # 当有效字符计数达到重叠长度时，当前的 real_idx 就是切分点
-                if current_norm_len == norm_overlap_len:
-                    best_overlap_len = real_idx
-                    break
-
-    # 计算增量
+    # --- 3. 计算 Delta ---
     if best_overlap_len > 0:
-        delta = cur[best_overlap_len:].strip()
+        # 重叠部分在 cur 中是 cur_tokens[best_cur_start_idx ... + len]
+        # delta 从该重叠部分的结束位置开始
+        last_match_token = cur_tokens[best_cur_start_idx + best_overlap_len - 1]
+        split_pos = last_match_token[2]
+        delta = cur[split_pos:].strip()
     else:
-        # 如果完全没找到重叠（可能是因为Whisper识别结果跳变太大，或者真的没重叠）
-        # 这种情况下直接拼接会有风险，但如果不拼就会丢字。
-        # 对于滑动窗口，如果没有重叠，通常意味着 cur 是全新的（窗口跳跃？）或者 prev 是空的。
-        # 但如果 prev 存在且无重叠，可能是 "Hello" -> "World" (中间断了?)
-        # 简单的策略是直接追加。
+        # 无重叠，默认直接拼接
         delta = cur
 
     if not delta:
         return base or ""
-        
-    # 简单的去重检查：如果 base 已经以 delta 开头（极其罕见），或者 base 结尾包含了 delta 的开头
-    # 这里再做一次 base 结尾与 delta 开头的融合检查，防止微小重复
+
+    # 二次检查：简单的字符串重叠（防止单词切分导致的标点遗漏）
     if base:
-        # 再次检查 base 的尾部和 delta 的头部
         m = min(len(base), len(delta))
-        overlap = 0
         for k in range(m, 0, -1):
             if base.endswith(delta[:k]):
-                overlap = k
+                delta = delta[k:].strip()
                 break
-        if overlap > 0:
-            delta = delta[overlap:].strip()
-
+    
     if not delta:
         return base or ""
 
-    return (base + (" " if base else "") + delta).strip()
+    candidate = (base + (" " if base else "") + delta).strip()
+    
+    # --- 4. 重复短语检测与去除 ---
+    # 暴力检查末尾重复: "Phrase A. Phrase A." -> "Phrase A."
+    
+    check_str = candidate[-min(len(candidate), 300):] # 只检查末尾 300 字符
+    n_check = len(check_str)
+    
+    # 从最大可能的重复长度开始
+    for length in range(n_check // 2, 4, -1): # 最小重复长度 5 chars
+        suffix = check_str[-length:]
+        # 前面紧挨着是否也是 suffix
+        prev_segment_end = n_check - length
+        prev_segment_start = n_check - 2 * length
+        
+        if prev_segment_start >= 0:
+            prev_segment = check_str[prev_segment_start : prev_segment_end]
+            # 比较时忽略首尾空白
+            if suffix.strip() == prev_segment.strip():
+                 # 发现重复，去掉后缀
+                 candidate = candidate[:-length].strip()
+                 break
+                 
+    return candidate
 
 def add_log(s):
     global logs
@@ -365,6 +368,8 @@ def upload_audio():
                     cur_seconds = None
                 
                 with buffer_lock:
+                    app.logger.info(f"Partial Transcribe: {cur_text} (seconds: {cur_seconds})")
+                    app.logger.info(f"Buffer Text: {buffer_text}")
                     if cur_seconds<8:
                         buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
                     else:

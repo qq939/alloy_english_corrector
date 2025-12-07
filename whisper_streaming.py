@@ -2,16 +2,18 @@ import io  # 字节流支持
 import numpy as np  # 数值与音频数组处理
 from scipy.io import wavfile  # 读取/写入 WAV
 import whisper  # OpenAI Whisper 推理
+import torch # Silero VAD 需要
 
 """
 英文流式识别模块（Whisper Streaming）。
 目标语言固定为英语（language="en"），输出也是英语（task="transcribe"）。
 支持 small 与 large-v3 两种模型规格。
+集成 Silero VAD 进行静音检测。
 """
 
 class WhisperStreamingModel:
     """Whisper 英文流式识别模型。"""
-    def __init__(self, model_size: str = "small", window_sec: float = 8.0):
+    def __init__(self, model_size: str = "large-v2", window_sec: float = 8.0):
         """初始化并加载模型，model_size 可为 "small" 或 "large-v3"。"""
         self.model = whisper.load_model(model_size)
         self.language = "en"
@@ -19,6 +21,15 @@ class WhisperStreamingModel:
         self._stream_sr = None
         self._streaming = False
         self._window_sec = float(max(1.0, window_sec))
+        
+        # 初始化 Silero VAD
+        try:
+            self.vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, trust_repo=True)
+            (self.get_speech_timestamps, _, _, _, _) = utils
+            self.vad_enabled = True
+        except Exception as e:
+            print(f"Warning: Failed to load Silero VAD model: {e}. VAD will be disabled.")
+            self.vad_enabled = False
 
     def _normalize(self, x: np.ndarray) -> np.ndarray:
         """将输入数组归一化为 float32 [-1, 1] 区间。"""
@@ -88,10 +99,32 @@ class WhisperStreamingModel:
             audio = self._normalize(audio)
         self.push_array(audio, int(rate))  # 复用数组推入流程
 
+    def _is_voice_active(self, audio: np.ndarray) -> bool:
+        """使用 Silero VAD 检测是否有人声。"""
+        if not self.vad_enabled:
+            return True
+        if len(audio) < 512: 
+            return False
+        try:
+            # 确保输入是 tensor
+            wav = torch.from_numpy(audio)
+            if wav.ndim > 1:
+                wav = wav.mean(dim=1) # 确保单声道
+            
+            speech_timestamps = self.get_speech_timestamps(
+                wav, 
+                self.vad_model,
+                sampling_rate=16000,
+                threshold=0.35 # 稍微降低阈值以防漏检
+            )
+            return len(speech_timestamps) > 0
+        except Exception:
+            return True # 失败则默认有人声
+
     def partial_transcribe(self) -> str:
         """对当前累计的音频做一次英文转写（不中断流）。"""
         if not self._stream_chunks:
-            return {"text":"", "offset":0.0}
+            return {"text":"", "seconds":0.0}
         sr = int(self._stream_sr or 16000)
         need = int(sr * self._window_sec)
         acc = []
@@ -104,12 +137,17 @@ class WhisperStreamingModel:
             if got >= need:
                 break
         if not acc:
-            return {"text":"", "offset":0.0}
+            return {"text":"", "seconds":0.0}
         tail = np.concatenate(list(reversed(acc))).astype(np.float32)
         if tail.size > need:
             tail = tail[-need:]
         x = self._prepare(tail, sr)
-        result = self.model.transcribe(x, language=self.language, task="transcribe")
+        
+        # # VAD 检查
+        # if not self._is_voice_active(x):
+        #     return {"text":"", "seconds":float(len(acc))}
+            
+        result = self.model.transcribe(x, language=self.language, task="translate", temperature=0.0)
         result["seconds"] = float(len(acc))
         return result
 

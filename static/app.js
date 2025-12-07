@@ -90,36 +90,72 @@ function drawWave() {
 }
 
 
-function startAudio() {
-  const constraints = { audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } };
-  navigator.mediaDevices.getUserMedia(constraints)
-    .then(stream => {
-      audioStream = stream;
-      try {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-      } catch (_) {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+async function startAudio() {
+  const baseConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+  let constraints = { audio: baseConstraints };
+  
+  try {
+    // 1. 初次尝试获取流（触发权限请求）
+    let stream = await navigator.mediaDevices.getUserMedia(constraints);
+    
+    // 2. 检查是否为iPhone麦克风
+    const track = stream.getAudioTracks()[0];
+    if (track && track.label && track.label.toLowerCase().includes('iphone')) {
+      logClient(`检测到iPhone麦克风 [${track.label}]，尝试切换...`);
+      
+      // 3. 枚举设备寻找替代品
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices.filter(d => d.kind === 'audioinput' && !d.label.toLowerCase().includes('iphone'));
+      
+      if (inputs.length > 0) {
+        // 优先选择内置麦克风 (Built-in) 或 MacBook 麦克风
+        const best = inputs.find(d => d.label.toLowerCase().includes('built-in') || d.label.toLowerCase().includes('macbook')) || inputs[0];
+        
+        logClient(`切换至: ${best.label}`);
+        
+        // 停止旧流
+        stream.getTracks().forEach(t => t.stop());
+        
+        // 使用新设备ID重新获取
+        constraints.audio = { ...baseConstraints, deviceId: { exact: best.deviceId } };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } else {
+        logClient('未找到非iPhone麦克风，继续使用当前设备。');
       }
-      const source = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      const proc = audioCtx.createScriptProcessor(4096, 1, 1);
-      source.connect(analyser);
-      source.connect(proc);
-      proc.connect(audioCtx.destination);
-      proc.onaudioprocess = e => {
-        const chan = e.inputBuffer.getChannelData(0);
-        pcmBuffer.push(new Float32Array(chan));
-      };
-      if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
-      } else if (audioCtx && audioCtx.resume) {
-        audioCtx.resume().catch(() => {});
-      }
-      setInterval(flushAudio, 1000);
-      drawWave();
-      document.getElementById('startAudio').classList.add('pulse');
-    }).catch(err => logClient(`麦克风错误: ${err && err.name || 'Unknown'}`));
+    } else if (track) {
+      logClient(`使用麦克风: ${track.label}`);
+    }
+
+    // 4. 初始化音频上下文
+    audioStream = stream;
+    try {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    } catch (_) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const source = audioCtx.createMediaStreamSource(stream);
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    const proc = audioCtx.createScriptProcessor(4096, 1, 1);
+    source.connect(analyser);
+    source.connect(proc);
+    proc.connect(audioCtx.destination);
+    proc.onaudioprocess = e => {
+      const chan = e.inputBuffer.getChannelData(0);
+      pcmBuffer.push(new Float32Array(chan));
+    };
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    } else if (audioCtx && audioCtx.resume) {
+      audioCtx.resume().catch(() => {});
+    }
+    setInterval(flushAudio, 1000);
+    drawWave();
+    document.getElementById('startAudio').classList.add('pulse');
+    
+  } catch (err) {
+    logClient(`麦克风错误: ${err && (err.message || err.name) || 'Unknown'}`);
+  }
 }
 
 function stopAudio() {

@@ -434,6 +434,7 @@ def upload_audio():
             asr_model.start_stream(sr_rate)
             speaking_active = True
             last_committed_ts = 0.0
+            buffer_text = ""
             
         asr_model.push_array(arr.astype(np.float32), sr_rate)
         
@@ -459,15 +460,27 @@ def upload_audio():
                 
                 with buffer_lock:
                     app.logger.info(f"Partial Transcribe: {cur_text} (seconds: {cur_seconds})")
-                    # 优先使用时间戳拼接
-                    if isinstance(chunk, dict) and "words" in chunk and "stream_seconds" in chunk:
-                         buffer_text, last_committed_ts = _append_chunk_timestamp(buffer_text, last_committed_ts, chunk)
+
+
+                    app.logger.info(f"Buffer Text: {buffer_text}")
+                    if cur_seconds is not None and cur_seconds<8:
+                        buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
                     else:
-                        app.logger.info(f"Buffer Text: {buffer_text}")
-                        if cur_seconds is not None and cur_seconds<8:
-                            buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
-                        else:
-                            buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
+                        buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
+
+
+                    # # 优先使用时间戳拼接
+                    # if isinstance(chunk, dict) and "words" in chunk and "stream_seconds" in chunk:
+                    #      buffer_text, last_committed_ts = _append_chunk_timestamp(buffer_text, last_committed_ts, chunk)
+                    # else:
+                    #     app.logger.info(f"Buffer Text: {buffer_text}")
+                    #     if cur_seconds is not None and cur_seconds<8:
+                    #         buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
+                    #     else:
+                    #         buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
+
+
+
                 last_partial_text = cur_text
                 
         b_all = (buffer_text or "").lower()
@@ -490,8 +503,9 @@ def upload_audio():
 
 @app.route("/api/recognize", methods=["POST"])
 def recognize_now():
-    global last_submit_ts, last_chunk_audio, last_chunk_sr, buffer_text
+    global last_submit_ts, last_chunk_audio, last_chunk_sr, buffer_text, speaking_active
     now_ts = time.time()
+    speaking_active = False # Ensure next upload starts a new stream
     with buffer_lock:
         text = buffer_text.strip()
         buffer_text = ""

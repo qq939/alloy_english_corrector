@@ -124,7 +124,7 @@ class WhisperStreamingModel:
     def partial_transcribe(self) -> str:
         """对当前累计的音频做一次英文转写（不中断流）。"""
         if not self._stream_chunks:
-            return {"text":"", "seconds":0.0}
+            return {"text":"", "window_seconds":0.0, "stream_seconds":0.0}
         sr = int(self._stream_sr or 16000)
         need = int(sr * self._window_sec)
         acc = []
@@ -137,7 +137,7 @@ class WhisperStreamingModel:
             if got >= need:
                 break
         if not acc:
-            return {"text":"", "seconds":0.0}
+            return {"text":"", "window_seconds":0.0, "stream_seconds": float(len(self._stream_chunks))}
         tail = np.concatenate(list(reversed(acc))).astype(np.float32)
         if tail.size > need:
             tail = tail[-need:]
@@ -145,10 +145,35 @@ class WhisperStreamingModel:
         
         # # VAD 检查
         # if not self._is_voice_active(x):
-        #     return {"text":"", "seconds":float(len(acc))}
+        #     return {"text":"", "window_seconds":float(len(acc)), "stream_seconds": float(len(self._stream_chunks))}
             
-        result = self.model.transcribe(x, language=self.language, task="translate", temperature=0.0)
-        result["seconds"] = float(len(acc))
+        # 使用 Whisper 原生参数进行静音过滤
+        # 为了防止过度过滤导致无结果，这里暂时禁用过滤 (设为 None)
+        result = self.model.transcribe(
+            x, 
+            language=self.language, 
+            task="transcribe", 
+            temperature=0.0,
+            no_speech_threshold=None,
+            logprob_threshold=None,
+            word_timestamps=True
+        )
+        
+        # Calculate actual seconds
+        total_samples = sum(c.size for c in self._stream_chunks)
+        window_samples = tail.size
+        result["window_seconds"] = float(window_samples) / 16000.0
+        result["stream_seconds"] = float(total_samples) / 16000.0
+        result["seconds"] = result["window_seconds"] # Backwards compatibility
+        
+        # Flatten words from segments if present
+        if "segments" in result:
+            all_words = []
+            for segment in result["segments"]:
+                if "words" in segment:
+                    all_words.extend(segment["words"])
+            result["words"] = all_words
+        
         return result
 
     def finish_stream(self) -> str:

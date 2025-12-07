@@ -38,6 +38,7 @@ last_chunk_audio = None
 last_chunk_sr = 16000
 last_partial_text = ""
 last_partial_ts = 0.0  # For throttling
+last_committed_ts = 0.0 # Timestamp of the last committed word
 PARTIAL_INTERVAL = 1 # Throttling interval (seconds)
 
 speaking_active = False
@@ -175,13 +176,97 @@ def _append_chunk(base: str, prev_text: str, cur_text: str) -> str:
         
         if prev_segment_start >= 0:
             prev_segment = check_str[prev_segment_start : prev_segment_end]
-            # 比较时忽略首尾空白
-            if suffix.strip() == prev_segment.strip():
+            # 比较时忽略首尾空白和标点
+            if suffix.strip().lower() == prev_segment.strip().lower():
                  # 发现重复，去掉后缀
                  candidate = candidate[:-length].strip()
                  break
                  
     return candidate
+
+def _append_chunk_timestamp(base_text: str, committed_ts: float, result: dict) -> tuple[str, float]:
+    """
+    基于时间戳的拼接：只追加时间戳在 last_committed_ts 之后的单词。
+    返回 (updated_text, new_committed_ts)
+    """
+    words = result.get("words", [])
+    if not words:
+        return base_text, committed_ts
+        
+    stream_seconds = result.get("stream_seconds", 0.0)
+    window_seconds = result.get("window_seconds", 0.0)
+    
+    # 当前窗口在全局流中的起始时间
+    window_start_global = max(0.0, stream_seconds - window_seconds)
+    
+    # 忽略窗口末尾不稳定的单词 (Right-Edge Masking)
+    # 比如忽略最后 0.8 秒的内容，等待下一次窗口滑动变得稳定后再提交
+    SAFETY_MARGIN = 0.8
+    
+    new_text_parts = []
+    max_ts = committed_ts
+    
+    word_debug_info = []
+
+    for w in words:
+        # word['start'] 是相对于窗口起始的
+        w_start_global = window_start_global + w.get("start", 0.0)
+        w_end_global = window_start_global + w.get("end", 0.0)
+        w_end_in_window = w.get("end", 0.0)
+        
+        word_text = w.get("word", "").strip()
+        
+        # 记录调试信息
+        word_debug_info.append(f"{word_text}({w_start_global:.2f}-{w_end_global:.2f})")
+
+        # 检查是否过于靠近窗口末尾（不稳定）
+        if w_end_in_window > window_seconds - SAFETY_MARGIN:
+             continue
+
+        # 只有当单词的开始时间晚于已提交的时间戳（加一点缓冲防止临界抖动）
+        if w_start_global > committed_ts + 0.05: 
+            text = word_text
+            if text:
+                new_text_parts.append(text)
+                max_ts = max(max_ts, w_end_global)
+    
+    if word_debug_info:
+        app.logger.info(f"CommittedTS: {committed_ts:.2f}, WindowStart: {window_start_global:.2f}, Words: {', '.join(word_debug_info)}")
+
+    if new_text_parts:
+        # 拼接
+        delta = " ".join(new_text_parts)
+        # 处理标点符号粘连 (Whisper word通常带前导空格，但也可能不带)
+        # 简单处理：如果 base 不为空，加空格
+        if base_text:
+             base_text = (base_text + " " + delta).strip()
+        else:
+             base_text = delta
+             
+        # 简单的去重后处理（防止极少数时间戳重叠导致的单词重复）
+        base_text = re.sub(r"(\b\w+\b)(?:\s+\1\b){1,}", r"\1", base_text, flags=re.I)
+        
+        # --- 重复短语检测与去除 ---
+        # 暴力检查末尾重复: "Phrase A. Phrase A." -> "Phrase A."
+        check_str = base_text[-min(len(base_text), 300):] # 只检查末尾 300 字符
+        n_check = len(check_str)
+        
+        # 从最大可能的重复长度开始
+        for length in range(n_check // 2, 4, -1): # 最小重复长度 5 chars
+            suffix = check_str[-length:]
+            # 前面紧挨着是否也是 suffix
+            prev_segment_end = n_check - length
+            prev_segment_start = n_check - 2 * length
+            
+            if prev_segment_start >= 0:
+                prev_segment = check_str[prev_segment_start : prev_segment_end]
+                # 比较时忽略首尾空白和标点
+                if suffix.strip().lower() == prev_segment.strip().lower():
+                     # 发现重复，去掉后缀
+                     base_text = base_text[:-length].strip()
+                     break
+        
+    return base_text, max_ts
 
 def add_log(s):
     global logs
@@ -283,7 +368,7 @@ def download_submissions():
 
 @app.route("/api/audio", methods=["POST"])
 def upload_audio():
-    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, last_chunk_audio, last_chunk_sr, last_partial_text, last_partial_ts
+    global buffer_text, speaking_active, speaking_last_ts, last_submit_ts, last_chunk_audio, last_chunk_sr, last_partial_text, last_partial_ts, last_committed_ts
     file_raw = request.files.get("audio_raw")
     file_wav = request.files.get("audio")
     if not file_raw and not file_wav:
@@ -348,6 +433,7 @@ def upload_audio():
         if not speaking_active:
             asr_model.start_stream(sr_rate)
             speaking_active = True
+            last_committed_ts = 0.0
             
         asr_model.push_array(arr.astype(np.float32), sr_rate)
         
@@ -363,17 +449,25 @@ def upload_audio():
                 except Exception:
                     cur_text = str(chunk or "").strip()
                 try:
-                    cur_seconds = float(chunk.get("seconds") or 0.0) if isinstance(chunk, dict) else None
+                    # Prefer window_seconds if available, else fallback to seconds
+                    val = chunk.get("window_seconds") if isinstance(chunk, dict) else None
+                    if val is None and isinstance(chunk, dict):
+                         val = chunk.get("seconds")
+                    cur_seconds = float(val) if val is not None else 0.0
                 except Exception:
-                    cur_seconds = None
+                    cur_seconds = 0.0
                 
                 with buffer_lock:
                     app.logger.info(f"Partial Transcribe: {cur_text} (seconds: {cur_seconds})")
-                    app.logger.info(f"Buffer Text: {buffer_text}")
-                    if cur_seconds<8:
-                        buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
+                    # 优先使用时间戳拼接
+                    if isinstance(chunk, dict) and "words" in chunk and "stream_seconds" in chunk:
+                         buffer_text, last_committed_ts = _append_chunk_timestamp(buffer_text, last_committed_ts, chunk)
                     else:
-                        buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
+                        app.logger.info(f"Buffer Text: {buffer_text}")
+                        if cur_seconds is not None and cur_seconds<8:
+                            buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
+                        else:
+                            buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
                 last_partial_text = cur_text
                 
         b_all = (buffer_text or "").lower()

@@ -100,6 +100,9 @@ def transcription_loop():
             # text() blocks until a sentence is completed (silence detected)
             text = recorder.text()
             if text.strip():
+                # Filter hallucinations (repetitive loops)
+                text = _filter_hallucinations(text)
+                
                 logger.info(f"Committed: {text}")
                 add_server_log(f"Recognized: {text}")
                 
@@ -125,6 +128,20 @@ def transcription_loop():
         except Exception as e:
             logger.error(f"Error in transcription loop: {e}")
             time.sleep(1)
+
+def _filter_hallucinations(text):
+    if not text:
+        return text
+    
+    # 1. Single word repetition (3+ times) e.g. "race race race"
+    # Matches a word boundary, word, word boundary, followed by (space/punct + same word) x 2+
+    text = re.sub(r"(\b\w+\b)(?:\s*[^\w\s]*\s*\1\b){2,}", r"\1", text, flags=re.IGNORECASE)
+    
+    # 2. Phrase repetition (3+ times) e.g. "I had it, I had it, I had it"
+    # Matches a phrase starting at word boundary, followed by (space/punct + same phrase) x 2+
+    text = re.sub(r"(\b.+?)(?:\s*[,.!?]*\s*\1){2,}", r"\1", text, flags=re.IGNORECASE)
+    
+    return text.strip()
 
 def _sanitize_text(s: str) -> str:
     s = re.sub(r"\s+", " ", s).strip()

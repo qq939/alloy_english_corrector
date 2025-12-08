@@ -77,9 +77,15 @@ function drawWave() {
     const dpr = window.devicePixelRatio || 1;
     const w = wave.parentElement.clientWidth || window.innerWidth;
     const parentH = wave.parentElement.clientHeight || Math.floor((window.innerHeight || 600) * 0.26);
+    
+    // Fix: 显式设置样式宽高，防止 Canvas 分辨率设置导致组件撑大
+    wave.style.width = w + 'px';
+    const finalH = parentH || 60;
+    wave.style.height = finalH + 'px';
+
     wave.width = Math.floor(w * dpr);
-    let hpx = parentH;
-    wave.height = Math.max(Math.floor(60 * dpr), Math.floor(hpx * dpr));
+    wave.height = Math.max(Math.floor(60 * dpr), Math.floor(finalH * dpr));
+    
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
   resizeWave();

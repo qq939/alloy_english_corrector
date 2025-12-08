@@ -141,3 +141,4 @@ openai-whisper
 faster_whisper
 openwakeword
 pvporcupine
+webrtcvad

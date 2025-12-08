@@ -182,7 +182,7 @@ class Assistant:
         Output format (strict), Align with colons:
         Original****sentence: <English sentence>
         Replacement*sentence: <Corrected English sentence>
-        Replacement*to*ChineseTranslation: <Chinese translation>
+        ReplacementSentence*and*ChineseTranslation: <One English sentence, followed by one Chinese sentence>
         ----------------------------------------
         """
         # 英语老师
@@ -235,7 +235,6 @@ class Assistant:
         SYSTEM_PROMPT3 =\
         """
         You are a data analyst try to find some word is or is not in the system message of chat_history.
-        You should first exclude the prefix "Replacement*words:".
         If Replacement*words is empty, just don't give any answers.
         If the word in Replacement*words is already in system message and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
         If not, just don't give any answers.
@@ -251,7 +250,7 @@ class Assistant:
                     # MessagesPlaceholder(variable_name="chat_history"),
                     [
                         {"type": "text", "text": "chat_history: {chat_history}"},
-                        {"type": "text", "text": "Replacement*words: {llm_output}"},
+                        {"type": "text", "text": "Replacement*words: {current_replacement_words}"},
                     ],
                 ),
             ]

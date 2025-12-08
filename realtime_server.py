@@ -72,12 +72,18 @@ current_partial = ""  # Current streaming text
 buffer_lock = threading.Lock()
 submissions = [] # For download
 last_submit_lines = [] # For logs endpoint (assistant response history)
+reset_counter = 0 # Epoch counter to invalidate old transcription results
 
 # --- Callbacks ---
 
 def on_realtime_update(text):
     """Called when the partial transcription updates."""
     global current_partial
+    
+    # Filter partials too, to avoid confusing user with looping text
+    if text:
+        text = _filter_hallucinations(text)
+        
     with buffer_lock:
         current_partial = text
 
@@ -91,14 +97,25 @@ def on_vad_stop():
 
 def transcription_loop():
     """Continuously retrieves committed text from the recorder."""
-    global recorder, full_transcript, current_partial, submissions, last_submit_lines
+    global recorder, full_transcript, current_partial, submissions, last_submit_lines, reset_counter
     logger.info("Transcription loop started.")
     add_server_log("Transcription loop started")
     
     while True:
         try:
+            # Capture current epoch before blocking call
+            with buffer_lock:
+                start_epoch = reset_counter
+
             # text() blocks until a sentence is completed (silence detected)
             text = recorder.text()
+            
+            # Check if reset happened during recognition
+            with buffer_lock:
+                if reset_counter != start_epoch:
+                    logger.info("Discarding text due to reset during transcription.")
+                    continue
+
             if text.strip():
                 # Filter hallucinations (repetitive loops)
                 text = _filter_hallucinations(text)
@@ -133,13 +150,14 @@ def _filter_hallucinations(text):
     if not text:
         return text
     
-    # 1. Single word repetition (3+ times) e.g. "race race race"
-    # Matches a word boundary, word, word boundary, followed by (space/punct + same word) x 2+
-    text = re.sub(r"(\b\w+\b)(?:\s*[^\w\s]*\s*\1\b){2,}", r"\1", text, flags=re.IGNORECASE)
+    # 1. Single word repetition (2+ times) e.g. "race race"
+    # Matches a word boundary, word, word boundary, followed by (space/punct + same word) x 1+
+    # More aggressive: {1,} instead of {2,}
+    text = re.sub(r"(\b\w+\b)(?:\s*[^\w\s]*\s*\1\b){1,}", r"\1", text, flags=re.IGNORECASE)
     
-    # 2. Phrase repetition (3+ times) e.g. "I had it, I had it, I had it"
-    # Matches a phrase starting at word boundary, followed by (space/punct + same phrase) x 2+
-    text = re.sub(r"(\b.+?)(?:\s*[,.!?]*\s*\1){2,}", r"\1", text, flags=re.IGNORECASE)
+    # 2. Phrase repetition (2+ times) e.g. "I had it, I had it"
+    # Matches a phrase starting at word boundary, followed by (space/punct + same phrase) x 1+
+    text = re.sub(r"(\b.+?)(?:\s*[,.!?]*\s*\1){1,}", r"\1", text, flags=re.IGNORECASE)
     
     return text.strip()
 
@@ -359,11 +377,14 @@ def recognize_now():
 
 @app.route("/reset", methods=["POST"])
 def reset():
-    global full_transcript, current_partial, last_submit_lines
+    global full_transcript, current_partial, last_submit_lines, reset_counter
     with buffer_lock:
         full_transcript = []
         current_partial = ""
         last_submit_lines = []
+        reset_counter += 1
+        
+        # Stop and start to reset VAD/internal state
         recorder.stop()
         recorder.start()
     

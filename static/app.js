@@ -105,35 +105,83 @@ async function startAudio() {
   let constraints = { audio: baseConstraints };
   
   try {
-    // 1. 初次尝试获取流（触发权限请求）
-    let stream = await navigator.mediaDevices.getUserMedia(constraints);
+    // 1. 尝试先枚举设备（如果已有权限，可以直接拿到列表，避免触发默认设备）
+    let devices = await navigator.mediaDevices.enumerateDevices();
+    let audioInputs = devices.filter(d => d.kind === 'audioinput');
     
-    // 2. 检查是否为iPhone麦克风
-    const track = stream.getAudioTracks()[0];
-    if (track && track.label && track.label.toLowerCase().includes('iphone')) {
-      logClient(`检测到iPhone麦克风 [${track.label}]，尝试切换...`);
-      
-      // 3. 枚举设备寻找替代品
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const inputs = devices.filter(d => d.kind === 'audioinput' && !d.label.toLowerCase().includes('iphone'));
-      
-      if (inputs.length > 0) {
-        // 优先选择内置麦克风 (Built-in) 或 MacBook 麦克风
-        const best = inputs.find(d => d.label.toLowerCase().includes('built-in') || d.label.toLowerCase().includes('macbook')) || inputs[0];
+    // 检查是否已有权限看到设备标签
+    const hasLabels = audioInputs.some(d => d.label && d.label.length > 0);
+    let bestDeviceId = null;
+    
+    // 辅助函数：选择最佳设备
+    const pickBestDevice = (inputs) => {
+        const candidates = inputs.filter(d => !d.label.toLowerCase().includes('iphone'));
+        if (candidates.length === 0) return null;
         
-        logClient(`切换至: ${best.label}`);
-        
-        // 停止旧流
-        stream.getTracks().forEach(t => t.stop());
-        
-        // 使用新设备ID重新获取
-        constraints.audio = { ...baseConstraints, deviceId: { exact: best.deviceId } };
+        candidates.sort((a, b) => {
+            const getScore = (d) => {
+               const l = d.label.toLowerCase();
+               if (l.includes('built-in') || l.includes('internal') || l.includes('macbook')) return 2;
+               if (d.deviceId === 'default') return 0; 
+               return 1;
+            };
+            return getScore(b) - getScore(a);
+        });
+        return candidates[0];
+    };
+
+    if (hasLabels) {
+       logClient(`已获权限，发现设备: ${audioInputs.map(d => d.label).join(', ')}`);
+       const best = pickBestDevice(audioInputs);
+       if (best) {
+           bestDeviceId = best.deviceId;
+           logClient(`优先选择设备: ${best.label}`);
+           constraints.audio = { ...baseConstraints, deviceId: { exact: bestDeviceId } };
+       }
+    }
+    
+    // 2. 获取音频流 (如果指定了 bestDeviceId，直接请求该设备；否则请求默认)
+    let stream;
+    try {
         stream = await navigator.mediaDevices.getUserMedia(constraints);
-      } else {
-        logClient('未找到非iPhone麦克风，继续使用当前设备。');
-      }
-    } else if (track) {
-      logClient(`使用麦克风: ${track.label}`);
+    } catch(e) {
+        // 如果指定设备失败，回退到默认
+        if (bestDeviceId) {
+            logClient("指定设备获取失败，尝试默认设备...");
+            constraints.audio = baseConstraints;
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        } else {
+            throw e;
+        }
+    }
+
+    // 3. (仅首次访问) 如果之前没拿到标签，现在拿到了，需要再次检查是否用的是 iPhone
+    if (!hasLabels) {
+        // 此时 stream 已打开，权限已获取
+        devices = await navigator.mediaDevices.enumerateDevices();
+        audioInputs = devices.filter(d => d.kind === 'audioinput');
+        
+        const currentTrack = stream.getAudioTracks()[0];
+        const currentLabel = currentTrack ? currentTrack.label : '';
+        logClient(`当前默认设备: ${currentLabel}`);
+        
+        const best = pickBestDevice(audioInputs);
+        
+        // 判定是否需要切换：如果当前是 iPhone，或者有更好的非 iPhone 设备
+        const isCurrentIphone = currentLabel.toLowerCase().includes('iphone');
+        const isTargetDifferent = best && best.label !== currentLabel;
+        
+        if (best && (isCurrentIphone || isTargetDifferent)) {
+            logClient(`首次授权，切换至更佳设备: ${best.label}`);
+            stream.getTracks().forEach(t => t.stop());
+            constraints.audio = { ...baseConstraints, deviceId: { exact: best.deviceId } };
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+        }
+    } else {
+        // 已有标签的情况下，我们已经尽力选了 bestDeviceId
+        // 打印一下最终结果
+        const currentTrack = stream.getAudioTracks()[0];
+        logClient(`最终使用麦克风: ${currentTrack ? currentTrack.label : 'Unknown'}`);
     }
 
     // 4. 初始化音频上下文

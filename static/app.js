@@ -7,6 +7,13 @@ const wave = document.getElementById('wave');
 const logsBox = document.getElementById('logs');
 const secureWarn = document.getElementById('secureWarn');
 
+// 后台保活音频
+let keepAliveAudio = new Audio();
+// 极短静音WAV Base64
+keepAliveAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABBGZGF0YQQAAAAAAA==';
+keepAliveAudio.loop = true;
+keepAliveAudio.volume = 0; // 静音但播放
+
 // 修复日志过长不换行导致组件宽度变化的问题
 if (logsBox) {
     const s = document.createElement('style');
@@ -111,6 +118,14 @@ function drawWave() {
 
 
 async function startAudio() {
+  // 启动后台保活
+  try {
+      await keepAliveAudio.play();
+      console.log('Background audio started');
+  } catch(e) {
+      console.warn('Background audio failed', e);
+  }
+
   // Call reset to clear server buffers and UI
   try {
     await fetch('/reset', { method: 'POST' });
@@ -237,6 +252,9 @@ async function startAudio() {
 }
 
 function stopAudio() {
+  // 停止后台保活
+  keepAliveAudio.pause();
+  
   if (audioStream) {
     audioStream.getTracks().forEach(t => t.stop());
     audioStream = null;

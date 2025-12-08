@@ -137,6 +137,7 @@ def transcription_loop():
                         # Consume buffer
                         full_transcript = []
                         text_to_submit = _strip_ok_suffix(all_text)
+                        
                 
                 if should_submit and text_to_submit:
                     # Trigger AI Assistant
@@ -207,6 +208,9 @@ def process_ai_response(text):
         
         lines_for_display = []
         assistant_text = ""
+
+        recorder.stop()
+        recorder.start()
         
         if resp:
             if isinstance(resp, bytes):

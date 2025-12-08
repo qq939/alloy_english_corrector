@@ -140,3 +140,4 @@ flask_cors
 openai-whisper
 faster_whisper
 openwakeword
+pvporcupine

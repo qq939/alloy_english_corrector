@@ -7,6 +7,20 @@ const wave = document.getElementById('wave');
 const logsBox = document.getElementById('logs');
 const secureWarn = document.getElementById('secureWarn');
 
+// 修复日志过长不换行导致组件宽度变化的问题
+if (logsBox) {
+    const s = document.createElement('style');
+    s.textContent = `
+      #logs { min-width: 0; }
+      #logs div { 
+          word-break: break-word; 
+          overflow-wrap: break-word; 
+          white-space: pre-wrap; 
+      }
+    `;
+    document.head.appendChild(s);
+}
+
 let lastLogsSig = '';
 
 function logClient(msg) {

@@ -136,3 +136,5 @@ Werkzeug
 xxhash
 yarl
 zstandard
+flask_cors
+

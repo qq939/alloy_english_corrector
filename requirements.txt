@@ -138,3 +138,4 @@ yarl
 zstandard
 flask_cors
 openai-whisper
+faster_whisper

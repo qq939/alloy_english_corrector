@@ -75,6 +75,14 @@ def _sanitize_text(s: str) -> str:  # 文本清洗
     s = re.sub(r"(\b\w+\b[\.\!\?])(?:\s+\1){1,}", r"\1", s, flags=re.I)  # 句子去重
     return s
 
+def _append_chunk_directly(base: str, cur_text: str) -> str:
+    if not cur_text:
+        return base or ""
+    if not base:
+        return cur_text or ""
+    return base + "" + cur_text
+
+
 def _append_chunk_offset(base: str, prev_text: str, prev_offset, cur_text: str, cur_offset) -> str:
     app.logger.debug("cur_text:" + cur_text)
     cur = (cur_text or "").strip()
@@ -281,7 +289,8 @@ def upload_audio():
             app.logger.debug("Before Lock text"+cur_text)
             app.logger.debug("Before Lock offset"+str(cur_offset))
             with buffer_lock:
-                buffer_text = _append_chunk_offset(buffer_text, last_partial_text, last_partial_offset, cur_text, cur_offset)
+                # buffer_text = _append_chunk_offset(buffer_text, last_partial_text, last_partial_offset, cur_text, cur_offset)
+                buffer_text = _append_chunk_directly(buffer_text,  cur_text)
             last_partial_text = cur_text
             last_partial_offset = cur_offset
         b_all = (buffer_text or "").lower()

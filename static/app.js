@@ -91,6 +91,16 @@ function drawWave() {
 
 
 async function startAudio() {
+  // Call reset to clear server buffers and UI
+  try {
+    await fetch('/reset', { method: 'POST' });
+    const liveBox = document.getElementById('live');
+    if (liveBox) liveBox.textContent = '';
+    logClient('缓冲区已重置');
+  } catch (e) {
+    console.error('Reset failed', e);
+  }
+
   const baseConstraints = { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true };
   let constraints = { audio: baseConstraints };
   

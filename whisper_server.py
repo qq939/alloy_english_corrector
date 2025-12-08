@@ -29,8 +29,11 @@ app.logger.addHandler(handler)
 app.logger.setLevel(logging.DEBUG)
 app.logger.debug("Whisper Server Starting...")
 
+window_sec = 1.5
+
+
 # Global State
-asr_model = WhisperStreamingModel("small")
+asr_model = WhisperStreamingModel("small", window_sec= window_sec)
 buffer_text = ""
 buffer_lock = threading.Lock()
 
@@ -39,7 +42,7 @@ last_chunk_sr = 16000
 last_partial_text = ""
 last_partial_ts = 0.0  # For throttling
 last_committed_ts = 0.0 # Timestamp of the last committed word
-PARTIAL_INTERVAL = 1 # Throttling interval (seconds)
+PARTIAL_INTERVAL = 0.8 # Throttling interval (seconds)
 
 speaking_active = False
 speaking_last_ts = 0.0
@@ -183,6 +186,58 @@ def _append_chunk(base: str, prev_text: str, cur_text: str) -> str:
                  break
                  
     return candidate
+
+
+
+def _append_chunk_directly(base: str, cur_text: str) -> str:
+    if not cur_text:
+        return base or ""
+    if not base:
+        return cur_text or ""
+    delta = cur_text
+    candidate = (base + (" " if base else "") + delta).strip()
+
+    # --- 4. 重复短语检测与去除 ---
+    # 暴力检查末尾重复: "Phrase A. Phrase A." -> "Phrase A."
+
+    check_str = candidate[-min(len(candidate), 300):]  # 只检查末尾 300 字符
+    n_check = len(check_str)
+
+    # 从最大可能的重复长度开始
+    for length in range(n_check // 2, 4, -1):  # 最小重复长度 5 chars
+        suffix = check_str[-length:]
+        # 前面紧挨着是否也是 suffix
+        prev_segment_end = n_check - length
+        prev_segment_start = n_check - 2 * length
+
+        if prev_segment_start >= 0:
+            prev_segment = check_str[prev_segment_start: prev_segment_end]
+            # 比较时忽略首尾空白和标点
+            if suffix.strip().lower() == prev_segment.strip().lower():
+                # 发现重复，去掉后缀
+                candidate = candidate[:-length].strip()
+                break
+
+    base_text = candidate
+    check_str = base_text[-min(len(base_text), 300):]
+    n_check = len(candidate)
+    # 从最大可能的重复长度开始
+    for length in range(n_check // 2, 4, -1):  # 最小重复长度 5 chars
+        suffix = check_str[-length:]
+        # 前面紧挨着是否也是 suffix
+        prev_segment_end = n_check - length
+        prev_segment_start = n_check - 2 * length
+
+        if prev_segment_start >= 0:
+            prev_segment = check_str[prev_segment_start: prev_segment_end]
+            # 比较时忽略首尾空白和标点
+            if suffix.strip().lower() == prev_segment.strip().lower():
+                # 发现重复，去掉后缀
+                base_text = base_text[:-length].strip()
+                break
+    return base_text
+
+
 
 def _append_chunk_timestamp(base_text: str, committed_ts: float, result: dict) -> tuple[str, float]:
     """
@@ -463,10 +518,10 @@ def upload_audio():
 
 
                     app.logger.info(f"Buffer Text: {buffer_text}")
-                    if cur_seconds is not None and cur_seconds<8:
+                    if cur_seconds is not None and cur_seconds<window_sec:
                         buffer_text = buffer_text[:-len(last_partial_text)] + cur_text
                     else:
-                        buffer_text = _append_chunk(buffer_text, last_partial_text, cur_text)
+                        buffer_text = _append_chunk_directly(buffer_text, cur_text)
 
 
                     # # 优先使用时间戳拼接
@@ -529,6 +584,14 @@ def recognize_now():
     submit_text(text)
     last_submit_ts = now_ts
     return jsonify({"ok": True, "text": text})
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    global buffer_text, speaking_active
+    with buffer_lock:
+        buffer_text = ""
+        speaking_active = False
+    return jsonify({"status": "ok"})
 
 def run():
     port = int(os.getenv("PORT", "5010"))

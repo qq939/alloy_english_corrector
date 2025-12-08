@@ -347,6 +347,8 @@ def reset():
         full_transcript = []
         current_partial = ""
         last_submit_lines = []
+        recorder.stop()
+        recorder.start()
     
     # We also probably want to clear RealtimeSTT's buffer if possible, 
     # but the API doesn't expose it easily. 

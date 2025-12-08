@@ -142,3 +142,6 @@ faster_whisper
 openwakeword
 pvporcupine
 webrtcvad
+halo
+
+

@@ -182,7 +182,7 @@ class Assistant:
         Output format (strict), Align with colons:
         Original****sentence: <English sentence>
         Replacement*sentence: <Corrected English sentence>
-        ReplacementSentence*and*ChineseTranslation: <One English sentence, followed by one Chinese sentence>
+        ReplacementSentence*and*ChineseTranslation: <One English sentence, followed by one Chinese sentence, a line break, one line of English, one line of Chinese.>
         ----------------------------------------
         """
         # 英语老师
@@ -236,7 +236,7 @@ class Assistant:
         """
         You are a data analyst try to find some word is or is not in the system message of chat_history.
         If Replacement*words is empty, just don't give any answers.
-        If the word in Replacement*words is already in system message and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
+        If the word in Replacement*words is already in chat_history and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
         If not, just don't give any answers.
         Give the concise answers.
         """

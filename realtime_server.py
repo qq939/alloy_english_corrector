@@ -103,12 +103,24 @@ def transcription_loop():
                 logger.info(f"Committed: {text}")
                 add_server_log(f"Recognized: {text}")
                 
+                should_submit = False
+                text_to_submit = ""
+                
                 with buffer_lock:
                     full_transcript.append(text.strip())
                     current_partial = ""
+                    
+                    # Check for "ok" trigger
+                    all_text = " ".join(full_transcript)
+                    if _check_is_ok(all_text):
+                        should_submit = True
+                        # Consume buffer
+                        full_transcript = []
+                        text_to_submit = _strip_ok_suffix(all_text)
                 
-                # Trigger AI Assistant
-                threading.Thread(target=process_ai_response, args=(text,)).start()
+                if should_submit and text_to_submit:
+                    # Trigger AI Assistant
+                    threading.Thread(target=process_ai_response, args=(text_to_submit,)).start()
                 
         except Exception as e:
             logger.error(f"Error in transcription loop: {e}")
@@ -132,6 +144,16 @@ def _sanitize_text(s: str) -> str:
     s = re.sub(r"(\b\w+\b)(?:\s+\1\b){1,}", r"\1", s, flags=re.I)
     s = re.sub(r"(\b\w+\b[\.\!\?])(?:\s+\1){1,}", r"\1", s, flags=re.I)
     return s
+
+def _check_is_ok(text):
+    if not text:
+        return False
+    text = text.lower()
+    ends_ok = re.search(r"(?:^|\s)(ok|okay)[\.!?\"]*$", text)
+    return (" ok" in text) or (" okay" in text) or ends_ok
+
+def _strip_ok_suffix(text):
+    return re.sub(r"\s*(ok|okay)[\.!?\"]?$", "", text, flags=re.IGNORECASE).strip()
 
 def process_ai_response(text):
     global submissions, last_submit_lines
@@ -294,22 +316,21 @@ def api_logs():
 def recognize_now():
     """
     Manually trigger recognition/submission.
-    In RealtimeSTT, we can't easily force a commit of the partial without silence.
-    But we can grab the current partial, submit it to AI, and reset.
+    Consumes all accumulated text (full_transcript + current_partial) and submits to AI.
     """
     global current_partial, full_transcript
     
     text_to_submit = ""
     with buffer_lock:
+        parts = list(full_transcript)
         if current_partial:
-            text_to_submit = current_partial
-            current_partial = ""
-            # We don't append to full_transcript here to avoid duplication if RealtimeSTT 
-            # later commits it? 
-            # Actually, if we force submit, we should probably tell the user we did.
-            # But RealtimeSTT's internal buffer might still hold it.
-            # This is tricky.
-            # Best approach for now: Just trigger AI with what we have.
+            parts.append(current_partial)
+        
+        text_to_submit = " ".join(parts).strip()
+        
+        # Clear buffers
+        full_transcript = []
+        current_partial = ""
     
     if text_to_submit:
         add_server_log(f"Manual Recognize: {text_to_submit}")

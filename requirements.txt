@@ -143,5 +143,5 @@ openwakeword
 pvporcupine
 webrtcvad
 halo
-
+websocket-client
 

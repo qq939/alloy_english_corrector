@@ -7,13 +7,6 @@ const wave = document.getElementById('wave');
 const logsBox = document.getElementById('logs');
 const secureWarn = document.getElementById('secureWarn');
 
-// 后台保活音频
-let keepAliveAudio = new Audio();
-// 极短静音WAV Base64
-keepAliveAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABBGZGF0YQQAAAAAAA==';
-keepAliveAudio.loop = true;
-keepAliveAudio.volume = 0; // 静音但播放
-
 // 修复日志过长不换行导致组件宽度变化的问题
 if (logsBox) {
     const s = document.createElement('style');
@@ -118,14 +111,6 @@ function drawWave() {
 
 
 async function startAudio() {
-  // 启动后台保活
-  try {
-      await keepAliveAudio.play();
-      console.log('Background audio started');
-  } catch(e) {
-      console.warn('Background audio failed', e);
-  }
-
   // Call reset to clear server buffers and UI
   try {
     await fetch('/reset', { method: 'POST' });
@@ -242,6 +227,25 @@ async function startAudio() {
     } else if (audioCtx && audioCtx.resume) {
       audioCtx.resume().catch(() => {});
     }
+    
+    // Web Audio API Oscillator Hack for Background Persistence
+    // 在同一个 AudioContext 中创建一个不可听的振荡器，保持音频引擎活跃
+    try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = 10; // 10Hz, below human hearing mostly
+        gain.gain.value = 0.001; // Extremely low volume
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        // 保存引用以便停止
+        audioCtx.keepAliveOsc = osc; 
+        console.log('Oscillator hack started');
+    } catch(e) {
+        console.warn('Oscillator hack failed', e);
+    }
+
     setInterval(flushAudio, 1000);
     drawWave();
     document.getElementById('startAudio').classList.add('pulse');
@@ -252,8 +256,13 @@ async function startAudio() {
 }
 
 function stopAudio() {
-  // 停止后台保活
-  keepAliveAudio.pause();
+  if (audioCtx && audioCtx.keepAliveOsc) {
+      try {
+          audioCtx.keepAliveOsc.stop();
+          audioCtx.keepAliveOsc.disconnect();
+          audioCtx.keepAliveOsc = null;
+      } catch(e) {}
+  }
   
   if (audioStream) {
     audioStream.getTracks().forEach(t => t.stop());

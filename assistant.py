@@ -4,6 +4,7 @@ import openai
 import json
 import os
 import logging
+import datetime
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda
@@ -74,7 +75,7 @@ class Assistant:
     def __init__(self, model):
         self.chain = self._create_inference_chain(model)
         self.chat_message_history = FileChatMessageHistory(file_path="lanchain_history.json")
-
+        self.memeory_max = 50
     def deduplicate_prompt(self, input):
         # 去重连续重复的字符
         import re
@@ -84,14 +85,19 @@ class Assistant:
 
     def deduplicate_chat_history(self, input):
         # 去重连续重复的字符
-        input["chat_history"] = self.chat_message_history.messages
+        # 只取最近的100条记录，避免Token溢出
+        messages = self.chat_message_history.messages
+        if len(messages) > self.memeory_max:
+            input["chat_history"] = messages[-self.memeory_max:]
+        else:
+            input["chat_history"] = messages
 
         return input
 
     def print_llm_output(self, input_data):
 
         """从第一个模型输出中提取Replacement words并更新词频"""
-        logger.info(f"{input_data['llm_output'].content}")
+        logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
         # 返回包含当前替换词和历史词频的字典
         return json.dumps({
             "llm_output": input_data["llm_output"].content,  # 保留第一个模型的原始输出
@@ -100,7 +106,7 @@ class Assistant:
     def extract_replacement_words(self, input_data):
 
         """从第二个模型输出中提取Replacement words并更新词频"""
-        logger.info(f"{input_data['llm_output']}")
+        logger.info(f"第二个模型输出：{input_data['llm_output']}")
         lines = input_data["llm_output"].strip().split("\n")
         for line in lines:
             if "Replacement*words:" not in line:
@@ -118,13 +124,14 @@ class Assistant:
         })
 
     def renew_word_frequency(self, input_data):
-        logger.info(f"{input_data['llm_output3']}")
+        logger.info(f"第三个模型的输出结果：{input_data['llm_output3']}")
         words = input_data["current_replacement_words"]
         # 从chat history解析最新的词频统计
         latest_word_frequency = {}
         for message in reversed(self.chat_message_history.messages):
             if message.type == "system":
                 match = message.content.split("[Statistics] Renewed word frequency: ")[-1].strip()
+
                 try:
                     latest_word_frequency = json.loads(match)
                 except (json.JSONDecodeError, TypeError):
@@ -138,7 +145,7 @@ class Assistant:
             else:
                 renewed_word_frequency[word] = 1
 
-        self.chat_message_history.add_message(SystemMessage(content=f"[Statistics] Renewed word frequency: {json.dumps(renewed_word_frequency)}"))
+        self.chat_message_history.add_message(SystemMessage(content=f"[Statistics] Renewed word frequency: {json.dumps(renewed_word_frequency)}", additional_kwargs={"timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}))
 
         return "\n".join([
             str(input_data.get('llm_output1', '')),
@@ -149,6 +156,8 @@ class Assistant:
     def answer(self, prompt, image):
         if not prompt:
             return
+
+        logger.info(f"用户输入:{prompt}")
 
 
         
@@ -234,11 +243,10 @@ class Assistant:
 
         SYSTEM_PROMPT3 =\
         """
-        You are a data analyst try to find some word is or is not in the system message of chat_history.
-        If Replacement*words is empty, just don't give any answers.
-        If the word in Replacement*words is already in chat_history and the word frequency is greater than 2, just tell the student how many times does the word shows in the 'Renewed word frequency' and what is the relevant human prompt. 
-        If not, just don't give any answers.
-        Give the concise answers.
+        你是一名数据分析师，需查找英文词汇是否存在于聊天记录中。
+        如果英文词汇（Replacement*words：之后的部分）为空，无需给出任何回答。
+        若已英文词汇出现在聊天记录中，且出现频次大于 2，请告知学生该词汇在'Renewed word frequency'中的出现次数、时间、以及对应的人工提问内容。
+        若英文词汇未出现在聊天记录中，则无需给出任何回答。
         """
         
         # 统计专家
@@ -278,7 +286,7 @@ webcam_stream = None
 # by uncommenting the following line:
 # model = ChatOpenAI(model="qwen-vl-plus", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",api_key=os.getenv("ALIYUN_API_KEY"))
 # model = ChatOpenAI(model="gpt-4o-mini")
-model = ChatOpenAI(model="deepseek-chat", base_url="https://api.deepseek.com/v1",api_key=os.getenv("DEEPSEEK_API_KEY"))
+model = ChatOpenAI(model="THUDM/GLM-4.1V-9B-Thinking", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
 
 assistant = Assistant(model)
 

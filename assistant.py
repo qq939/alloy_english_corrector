@@ -75,7 +75,7 @@ class Assistant:
     def __init__(self, model):
         self.chain = self._create_inference_chain(model)
         self.chat_message_history = FileChatMessageHistory(file_path="lanchain_history.json")
-        self.memeory_max = 50
+        self.memeory_max = 60
     def deduplicate_prompt(self, input):
         # 去重连续重复的字符
         import re
@@ -243,6 +243,7 @@ class Assistant:
 
         SYSTEM_PROMPT3 =\
         """
+        请输出英文回答。
         你是一名数据分析师，需查找英文词汇是否存在于聊天记录中。
         如果英文词汇（Replacement*words：之后的部分）为空，无需给出任何回答。
         若已英文词汇出现在聊天记录中，且出现频次大于 2，请告知学生该词汇在'Renewed word frequency'中的出现次数、时间、以及对应的人工提问内容。
@@ -286,7 +287,7 @@ webcam_stream = None
 # by uncommenting the following line:
 # model = ChatOpenAI(model="qwen-vl-plus", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",api_key=os.getenv("ALIYUN_API_KEY"))
 # model = ChatOpenAI(model="gpt-4o-mini")
-model = ChatOpenAI(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
+model = ChatOpenAI(model="Pro/deepseek-ai/DeepSeek-V3.2", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
 
 assistant = Assistant(model)
 

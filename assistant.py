@@ -4,7 +4,7 @@ import openai
 import json
 import os
 import logging
-import datetime
+from datetime import datetime
 from dotenv import load_dotenv
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables import RunnableLambda

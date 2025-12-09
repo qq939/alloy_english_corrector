@@ -286,7 +286,7 @@ webcam_stream = None
 # by uncommenting the following line:
 # model = ChatOpenAI(model="qwen-vl-plus", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",api_key=os.getenv("ALIYUN_API_KEY"))
 # model = ChatOpenAI(model="gpt-4o-mini")
-model = ChatOpenAI(model="THUDM/GLM-4.1V-9B-Thinking", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
+model = ChatOpenAI(model="deepseek-ai/DeepSeek-R1-0528-Qwen3-8B", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
 
 assistant = Assistant(model)
 

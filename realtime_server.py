@@ -63,6 +63,7 @@ file_handler = logging.FileHandler("realtime_server.log", encoding="utf-8")
 file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
 logger.addHandler(file_handler)
 logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.INFO)
 
 # --- Global State ---
 recorder = None
@@ -272,8 +273,9 @@ def init_recorder():
         
         # VAD & Timing Parameters
         silero_sensitivity=0.4,
-        post_speech_silence_duration=0.7, 
-        min_length_of_recording=0.5,
+        webrtc_sensitivity=3,
+        post_speech_silence_duration=0.4, 
+        min_length_of_recording=0.4,
         min_gap_between_recordings=0,
         realtime_processing_pause=0.05, 
         realtime_model_type="tiny",

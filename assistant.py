@@ -16,13 +16,7 @@ from langchain_openai import ChatOpenAI
 from speech_recognition import UnknownValueError
 
 load_dotenv()
-logger = logging.getLogger(__name__)
-logfile = "assistant.log"
-logging.basicConfig(filename=logfile, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(logging.Formatter('%(message)s'))
-logger.addHandler(console_handler)
+
 
 class WebcamStream:
     def __init__(self):
@@ -75,7 +69,19 @@ class Assistant:
     def __init__(self, model):
         self.chain = self._create_inference_chain(model)
         self.chat_message_history = FileChatMessageHistory(file_path="lanchain_history.json")
-        self.memeory_max = 60
+        self.memeory_max = 24
+
+        self.logger = logging.getLogger(__name__)
+        logfile = "assistant.log"
+        file_handler = logging.FileHandler(logfile)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+        self.logger.addHandler(file_handler)
+
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(logging.Formatter('%(message)s'))
+        self.logger.addHandler(console_handler)
     def deduplicate_prompt(self, input):
         # 去重连续重复的字符
         import re
@@ -97,7 +103,7 @@ class Assistant:
     def print_llm_output(self, input_data):
 
         """从第一个模型输出中提取Replacement words并更新词频"""
-        logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
+        self.logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
         # 返回包含当前替换词和历史词频的字典
         return json.dumps({
             "llm_output": input_data["llm_output"].content,  # 保留第一个模型的原始输出
@@ -106,7 +112,7 @@ class Assistant:
     def extract_replacement_words(self, input_data):
 
         """从第二个模型输出中提取Replacement words并更新词频"""
-        logger.info(f"第二个模型输出：{input_data['llm_output']}")
+        self.logger.info(f"第二个模型输出：{input_data['llm_output']}")
         lines = input_data["llm_output"].strip().split("\n")
         for line in lines:
             if "Replacement*words:" not in line:
@@ -124,7 +130,7 @@ class Assistant:
         })
 
     def renew_word_frequency(self, input_data):
-        logger.info(f"第三个模型的输出结果：{input_data['llm_output3']}")
+        self.logger.info(f"第三个模型的输出结果：{input_data['llm_output3']}")
         words = input_data["current_replacement_words"]
         # 从chat history解析最新的词频统计
         latest_word_frequency = {}
@@ -135,7 +141,7 @@ class Assistant:
                 try:
                     latest_word_frequency = json.loads(match)
                 except (json.JSONDecodeError, TypeError):
-                    logger.error(f"Failed to parse JSON: {match}")
+                    self.logger.error(f"Failed to parse JSON: {match}")
                 break
 
         renewed_word_frequency = latest_word_frequency.copy()
@@ -157,7 +163,7 @@ class Assistant:
         if not prompt:
             return
 
-        logger.info(f"用户输入:{prompt}")
+        self.logger.info(f"用户输入:{prompt}")
 
 
         
@@ -287,7 +293,10 @@ webcam_stream = None
 # by uncommenting the following line:
 # model = ChatOpenAI(model="qwen-vl-plus", base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",api_key=os.getenv("ALIYUN_API_KEY"))
 # model = ChatOpenAI(model="gpt-4o-mini")
-model = ChatOpenAI(model="Pro/deepseek-ai/DeepSeek-V3.2", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
+# Note: Pro/deepseek-ai/DeepSeek-V3.2 requires paid balance on SiliconFlow.
+# Switching to a free model (THUDM/glm-4-9b-chat) for now.
+model = ChatOpenAI(model="THUDM/glm-4-9b-chat", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
+# model = ChatOpenAI(model="Pro/deepseek-ai/DeepSeek-V3.2", base_url="https://api.siliconflow.cn/v1", api_key=os.getenv("SILICONFLOW_API_KEY"))
 
 assistant = Assistant(model)
 

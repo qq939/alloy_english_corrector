@@ -101,27 +101,30 @@ class Assistant:
         return input
 
     def print_llm_output(self, input_data):
-
-        """从第一个模型输出中提取Replacement words并更新词频"""
-        self.logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
+        try:
+            """从第一个模型输出中提取Replacement words并更新词频"""
+            self.logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
+        except Exception as e:
+            self.logger.error(f"Error in 第一个模型输出: {e}")
         # 返回包含当前替换词和历史词频的字典
         return json.dumps({
             "llm_output": input_data["llm_output"].content,  # 保留第一个模型的原始输出
             "llm_output1": input_data["llm_output"].content,
         })
     def extract_replacement_words(self, input_data):
-
-        """从第二个模型输出中提取Replacement words并更新词频"""
-        self.logger.info(f"第二个模型输出：{input_data['llm_output']}")
-        lines = input_data["llm_output"].strip().split("\n")
-        for line in lines:
-            if "Replacement*words:" not in line:
-                words = []
-                continue
+        try:
+            """从第二个模型输出中提取Replacement words并更新词频"""
+            self.logger.info(f"第二个模型输出：{input_data['llm_output']}")
+            lines = input_data["llm_output"].strip().split("\n")
+            for line in lines:
+                if "Replacement*words:" not in line:
+                    words = []
+                    continue
             words_part = line.split("Replacement words:")[-1].strip()
             # 第二步：按逗号分割为列表，去除空值和空格
             words = [word.strip() for word in words_part.split(",") if word.strip()]
-            break
+        except Exception as e:
+            self.logger.error(f"Error in 第二个模型输出: {e}")
         # 返回包含当前替换词和历史词频的字典
         return json.dumps({
             "current_replacement_words": words,
@@ -250,10 +253,10 @@ class Assistant:
         SYSTEM_PROMPT3 =\
         """
         请输出英文回答。
-        你是一名数据分析师，需查找英文词汇是否存在于聊天记录中。
+        你是一名数据分析师，需查找英文词汇是否存在于聊天记录的系统信息中。
         如果英文词汇（Replacement*words：之后的部分）为空，无需给出任何回答。
-        若已英文词汇出现在聊天记录中，且出现频次大于 2，请告知学生该词汇在'Renewed word frequency'中的出现次数、时间、以及对应的人工提问内容。
-        若英文词汇未出现在聊天记录中，则无需给出任何回答。
+        若已英文词汇出现在聊天记录的系统信息中，且出现频次大于 2，请告知该词汇在'Renewed word frequency'中的出现次数、时间、以及系统信息所对应的人工提问的内容。
+        若英文词汇未出现在聊天记录的系统信息中，则无需给出任何回答。
         """
         
         # 统计专家

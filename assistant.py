@@ -70,8 +70,10 @@ class Assistant:
         self.chain = self._create_inference_chain(model)
         self.chat_message_history = FileChatMessageHistory(file_path="lanchain_history.json")
         self.memeory_max = 24
+        self.word_n = 5        # 重点词数
 
         self.logger = logging.getLogger(__name__)
+        self.logger.level = logging.INFO
         logfile = "assistant.log"
         file_handler = logging.FileHandler(logfile)
         file_handler.setLevel(logging.INFO)
@@ -82,8 +84,7 @@ class Assistant:
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter('%(message)s'))
         self.logger.addHandler(console_handler)
-        # 重点词数
-        self.word_n = 5
+
     def deduplicate_prompt(self, input):
         # 去重连续重复的字符
         import re
@@ -103,33 +104,39 @@ class Assistant:
         return input
 
     def print_llm_output(self, input_data):
+        output = ""
         try:
             """从第一个模型输出中提取Replacement words并更新词频"""
             self.logger.info(f"第一个模型输出：{input_data['llm_output'].content}")
+            output = json.dumps({
+            "llm_output": input_data["llm_output"].content,  # 保留第一个模型的原始输出
+            "llm_output1": input_data["llm_output"].content,
+            "word_n": str(self.word_n),
+        })
         except Exception as e:
             self.logger.error(f"Error in 第一个模型输出: {e}")
         # 返回包含当前替换词和历史词频的字典
-        return json.dumps({
-            "llm_output": input_data["llm_output"].content,  # 保留第一个模型的原始输出
-            "llm_output1": input_data["llm_output"].content,
-        })
+        return output
     def extract_replacement_words(self, input_data):
+        words = []
         try:
             """从第二个模型输出中提取Replacement words并更新词频"""
             self.logger.info(f"第二个模型输出：{input_data['llm_output']}")
             lines = input_data["llm_output"].strip().split("\n")
+
             for line in lines:
                 if "Replacement*words:" not in line:
                     words = []
                     continue
-            words_part = line.split("Replacement words:")[-1].strip()
-            # 第二步：按逗号分割为列表，去除空值和空格
-            words = [word.strip() for word in words_part.split(",") if word.strip()]
+                words_part = line.split("Replacement words:")[-1].strip()
+                # 第二步：按逗号分割为列表，去除空值和空格
+                words = [word.strip() for word in words_part.split(",") if word.strip()]
+                break
         except Exception as e:
             self.logger.error(f"Error in 第二个模型输出: {e}")
         # 返回包含当前替换词和历史词频的字典
         return json.dumps({
-            "current_replacement_words": words,
+            "current_replacement_words": " ,".join(words),
             "llm_output": input_data["llm_output"],
             "llm_output1": input_data["llm_output1"],
         })
@@ -223,7 +230,7 @@ class Assistant:
         )
 
         SYSTEM_PROMPT2 =\
-        f"""
+        """
         You receive the English Origin sentence and the English Replacement sentence.
         Extract better version words (replaced words) from the Replacement sentence.
         Output rules:
@@ -232,7 +239,7 @@ class Assistant:
         - If no word replaced, return an empty list
         - Drop words shorter than 6 chars
         - Drop words not nouns/verbs/adjectives, or overly basic beginner words
-        - Keep only {self.word_n} words in the list, if more than {self.word_n} words, keep the longest or noun words
+        - Keep less than {word_n} words in the list, if more than {word_n} words, keep the longest or noun words
         Format,Align with colons:
         ----------------------------------------
         Replacement*words: word1, word2, word3
@@ -256,10 +263,10 @@ class Assistant:
         SYSTEM_PROMPT3 =\
         """
         请输出英文回答。
-        你是一名数据分析师，需查找英文词汇是否存在于聊天记录的系统信息中。
-        如果英文词汇（Replacement*words：之后的部分）为空，无需给出任何回答。
-        若已英文词汇出现在聊天记录的系统信息中，且出现频次大于 2，请告知该词汇在'Renewed word frequency'中的出现次数、时间、以及系统信息所对应的人工提问的内容。
-        若英文词汇未出现在聊天记录的系统信息中，则无需给出任何回答。
+        你是一名数据分析师，需查找给出的英文词汇是否存在于聊天记录的系统信息中。
+        如果给出的英文词汇为空，无需给出任何回答。
+        如果给出的英文词汇出现在聊天记录的系统信息中，且出现频次大于 2，请告知该词汇在'Renewed word frequency'中的出现次数、时间、以及系统信息所对应的人工提问的内容。
+        如果给出的英文词汇未出现在聊天记录的系统信息中，则无需给出任何回答。
         """
         
         # 统计专家
@@ -271,7 +278,7 @@ class Assistant:
                     # MessagesPlaceholder(variable_name="chat_history"),
                     [
                         {"type": "text", "text": "chat_history: {chat_history}"},
-                        {"type": "text", "text": "Replacement*words: {current_replacement_words}"},
+                        {"type": "text", "text": "英文词汇: {current_replacement_words}"},
                     ],
                 ),
             ]
@@ -313,6 +320,7 @@ if __name__ == "__main__":
     def audio_callback(recognizer, audio):
         try:
             prompt = recognizer.recognize_whisper(audio, model="base", language="english")
+            print(f"prompt:{prompt}")
             assistant.answer(prompt, None)
         except UnknownValueError:
             print("There was an error processing the audio.")

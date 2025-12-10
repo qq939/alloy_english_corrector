@@ -82,6 +82,8 @@ class Assistant:
         console_handler.setLevel(logging.INFO)
         console_handler.setFormatter(logging.Formatter('%(message)s'))
         self.logger.addHandler(console_handler)
+        # 重点词数
+        self.word_n = 5
     def deduplicate_prompt(self, input):
         # 去重连续重复的字符
         import re
@@ -200,7 +202,7 @@ class Assistant:
         Output format (strict), Align with colons:
         Original****sentence: <English sentence>
         Replacement*sentence: <Corrected English sentence>
-        ReplacementSentence*and*ChineseTranslation: <One English sentence, followed by one Chinese sentence, a line break, one line of English, one line of Chinese.>
+        ReplacementSentence*and*ChineseTranslation: <Format ： One English sentence ： one Chinese sentence>
         ----------------------------------------
         """
         # 英语老师
@@ -221,7 +223,7 @@ class Assistant:
         )
 
         SYSTEM_PROMPT2 =\
-        """
+        f"""
         You receive the English Origin sentence and the English Replacement sentence.
         Extract better version words (replaced words) from the Replacement sentence.
         Output rules:
@@ -230,6 +232,7 @@ class Assistant:
         - If no word replaced, return an empty list
         - Drop words shorter than 6 chars
         - Drop words not nouns/verbs/adjectives, or overly basic beginner words
+        - Keep only {self.word_n} words in the list, if more than {self.word_n} words, keep the longest or noun words
         Format,Align with colons:
         ----------------------------------------
         Replacement*words: word1, word2, word3
